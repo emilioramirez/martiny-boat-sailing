@@ -1,8 +1,19 @@
 # Sailing Simulator — Game Build Prompt
 
-> **Target**: Build a complete, self-contained single HTML file. No build step, no bundler.
-> **Purpose**: An interactive educational game to learn how to sail a sailboat.
+> **Goal**: Build an interactive educational game to learn how to sail a sailboat.
 > **Audience**: Beginners learning real sailing fundamentals through play.
+>
+> This prompt is split into two parts:
+> - **Part 1 — Game Design & Logic**: engine-agnostic. Defines *what* the game is, *how* it behaves, and *what* the player sees. Valid for any platform (web, Godot, Unity, etc.).
+> - **Part 2 — Implementation: Web / Phaser**: web-specific. Defines *how* to build it using Phaser on a single HTML file. **Replace this entire part** when targeting a different engine or platform — Part 1 stays untouched.
+
+---
+
+# PART 1 — Game Design & Logic
+
+> These sections are engine-agnostic. Do not reference any specific engine API here.
+> All code snippets in Part 1 are written in pseudocode or plain JavaScript as a notation
+> convenience — adapt to the target language as needed.
 
 ---
 
@@ -35,7 +46,9 @@ There is no score or time pressure by default. It is a sandbox learning tool wit
 | Heading | Top-left | Current bow heading in degrees (0–360°) |
 | Sail trim status | On the Mainsheet Controller widget | Text label integrated into the rope controller (see Section 3) |
 | Rudder angle | On the Helm Controller widget | Shown on the mini-boat silhouette beside the helm wheel (see Section 3) |
-| Objective | Bottom-left | Current map objective text (e.g. "Round buoy #1 and return") |
+| Objective | Bottom-left | Current map objective text (resolved via i18n key) |
+
+All HUD strings come from the `TRANSLATIONS` object via `t()` — see Section 10.
 
 ---
 
@@ -52,31 +65,31 @@ The mainsheet controller is a **rope widget** that visually represents the tensi
 - The rope morphs continuously and fluidly between these two shapes as the user interacts.
 
 **Interaction:**
-- A draggable **cleat handle** (small filled circle, 12px radius) sits at the bottom end of the rope.
+- A draggable **cleat handle** (small filled circle) sits at the bottom end of the rope.
 - **Desktop**: Click and drag the handle. Drag upward / inward = trim in (rope stretches long and thin). Drag downward / outward = ease (rope shortens and thickens).
 - **Mobile**: Same — touch and drag the handle.
 - The boom on the world boat sprite rotates in real time to match the current trim state.
 - The total interactive drag range maps linearly to sail trim angle 0°–85°.
 
-**Text label** displayed directly below or beside the rope widget, updated every frame:
+**Text label** displayed directly below or beside the rope widget, updated every frame via `t()`:
 
-| Trim state | Label | Label color |
-|---|---|---|
-| Fully eased | `EASED` | Grey |
-| Intermediate (easing) | `EASING…` | Yellow |
-| Near-optimal trim | `TRIMMED` | Green |
-| Over-trimmed (stalled) | `STALLED` | Orange |
-| No-go zone / luffing | `LUFFING` | Red |
+| Trim state | i18n key | ES | EN |
+|---|---|---|---|
+| Fully eased | `trim.eased` | FILADA | EASED |
+| Intermediate | `trim.easing` | FILANDO… | EASING… |
+| Near-optimal | `trim.trimmed` | CAZADA | TRIMMED |
+| Over-trimmed | `trim.stalled` | PARADA | STALLED |
+| No-go zone | `trim.luffing` | FLAMEA | LUFFING |
 
-Widget dimensions: taut state ≈ 100px tall × 6px wide. Eased state ≈ 30px tall × 18px wide. Both states on a semi-transparent dark rounded-rect background panel (alpha 0.5) so the rope is legible over water.
+Widget dimensions: taut state ≈ 100px tall × 6px wide. Eased state ≈ 30px tall × 18px wide.
 
 ### Helm Controller (rudder / steering)
 
 The helm controller is a **mini helm wheel** that the user rotates to steer, rendered next to a **miniature top-down boat silhouette** so the player can always see the rudder effect.
 
 **Interaction:**
-- The wheel has a visible **grab handle** on its rim (small filled circle). The user drags this handle in a circular arc.
-- **Desktop + Mobile**: Drag the handle clockwise = starboard (turn right); counter-clockwise = port (turn left).
+- The wheel has a visible **grab handle** on its rim. The user drags this handle in a circular arc.
+- **Desktop + Mobile**: Drag clockwise = starboard (turn right); counter-clockwise = port (turn left).
 - Maximum wheel rotation: ±90° from center, mapping to ±45° rudder angle on the actual boat.
 - When released, the wheel gradually springs back to center, which gradually centers the rudder (does not snap).
 
@@ -86,22 +99,22 @@ The helm controller is a **mini helm wheel** that the user rotates to steer, ren
   ◄ PORT        STBD ►
       ┌──────────────┐
       │    [wheel]   │  ←── 80px diameter helm wheel
-      │              │        with 6 spokes + rim handle
+      │              │        with 6 spokes + rim grab handle
       │  [mini boat] │  ←── 50×18px top-down hull silhouette
       │    rudder ╱  │        rudder line at stern rotates live
       └──────────────┘
 ```
 
-1. Circular wheel outline (~80px diameter), 6 evenly-spaced spokes from center to rim, grab handle on rim.
-2. Adjacent: small top-down boat silhouette. A **rudder line** at the stern rotates to match current helm angle — this is the key visual feedback showing whether you are steering to port or starboard.
-3. Port/starboard labels flank the widget. The active-side label highlights (bold, bright white) when the helm is deflected.
-4. All on a semi-transparent rounded-rect background panel.
+- Circular wheel with 6 evenly-spaced spokes and a grab handle on the rim.
+- Adjacent: small top-down boat silhouette. A **rudder line** at the stern rotates to match current helm angle.
+- Port/starboard labels (i18n keys `helm.port` / `helm.starboard`) flank the widget. The active-side label highlights when the helm is deflected.
+- All on a semi-transparent rounded-rect background panel.
 
 ---
 
 ## 4. Sailing Physics Model
 
-This is the core of the game. Implement a custom, simplified but realistic vector-based model. **Do not use Phaser Arcade Physics or Matter.js for this** — implement it as a standalone `SailingPhysics` class.
+This is the core of the game. Implement as a standalone module/class (`SailingPhysics`) with no dependency on any game engine — pure math that takes a state object and returns a new state object.
 
 ### Key definitions
 
@@ -126,37 +139,65 @@ This is the core of the game. Implement a custom, simplified but realistic vecto
 ### Speed calculation (per frame)
 
 ```js
-const optimalTrim = getOptimalTrim(AWA);           // from table above
+const optimalTrim = getOptimalTrim(AWA);
 const trimError = Math.abs(sailTrimAngle - optimalTrim);
 const trimEfficiency = Math.max(0, 1 - trimError / 45);  // 1 = perfect, 0 = 45°+ off
-const pointFactor = getSpeedFactor(AWA);           // from table above
+const pointFactor = getSpeedFactor(AWA);
 const targetSpeed = windSpeed * pointFactor * trimEfficiency;
-boatSpeed = lerp(boatSpeed, targetSpeed, 0.02 * deltaSeconds * 60);
+boatSpeed = lerp(boatSpeed, targetSpeed, ACCEL * delta);  // frame-rate independent
 ```
 
 ### No-go zone behavior
 
-- If AWA < 40°, `pointFactor = 0`. The boat decelerates due to drag (multiply speed by 0.97 per frame).
-- The sail luffs visually: the boom flaps slightly, trim status turns red.
+- If AWA < 40°, `pointFactor = 0`. The boat decelerates due to drag (e.g. multiply speed by 0.97 per frame).
+- The sail luffs visually: boom flaps slightly, trim label shows `trim.luffing`.
 - The boat does NOT stop instantly — it coasts to a halt.
 
 ### Leeway (lateral drift)
 
-Apply a small drift force perpendicular to the boat heading when sailing upwind. This simulates the boat being pushed sideways by wind. Magnitude: `windSpeed * 0.015` knots sideways, reduced to 0 when running downwind.
+Apply a small drift force perpendicular to the boat heading when sailing upwind. Magnitude: `windSpeed * 0.015` units/s sideways, reduced to 0 when running downwind.
 
 ### Tacking (bow through wind)
 
-When the boat heading passes through the wind direction (AWA crosses 0°), the boom automatically swings to the opposite side. Apply a brief 30% speed penalty for 1 second to simulate the boat losing momentum through the tack.
+When AWA crosses 0° (bow passes through the wind), the boom automatically swings to the opposite side. Apply a 30% speed penalty for 1 second to simulate lost momentum.
 
 ### Jibing (stern through wind)
 
-When running and AWA crosses 180°, the boom swings to the other side abruptly. Apply a 20% speed penalty for 0.5 seconds.
+When AWA crosses 180° (stern passes through the wind), the boom swings to the other side abruptly. Apply a 20% speed penalty for 0.5 seconds.
+
+### SailingPhysics interface
+
+```js
+// Input
+{
+  boatHeading: number,    // degrees
+  boatSpeed: number,      // knots
+  boatPosition: {x, y},
+  windDirection: number,  // degrees
+  windSpeed: number,      // knots
+  sailTrimAngle: number,  // 0–85°
+  rudderAngle: number,    // -45° to +45°
+  delta: number,          // seconds since last frame
+}
+
+// Output
+{
+  boatHeading: number,
+  boatSpeed: number,
+  boatPosition: {x, y},
+  AWA: number,
+  trimStatus: 'luffing' | 'easing' | 'trimmed' | 'stalled' | 'eased',
+  isInIrons: boolean,
+  justTacked: boolean,
+  justJibed: boolean,
+}
+```
 
 ---
 
 ## 5. Maps
 
-Maps are pure data objects in a `MAPS` array. The `GameScene` reads the selected map and builds the world from it — no map-specific logic inside the scene code.
+Maps are pure data objects in a `MAPS` array. The game scene reads the selected map and builds the world from it — no map-specific logic inside the scene code itself.
 
 ### Map data structure
 
@@ -167,15 +208,15 @@ Maps are pure data objects in a `MAPS` array. The `GameScene` reads the selected
   worldSize: { width: 3000, height: 3000 },
   startPosition: { x: 0, y: 0 },
   startHeading: 0,                      // degrees, 0 = North
-  wind: { direction: 180, speed: 12 },
+  wind: { direction: 180, speed: 12 }, // default wind for this map
   islands: [
-    { points: [[x,y], [x,y], ...], color: 0x6B8E23 }
+    { points: [[x,y], [x,y], ...], color: '#6B8E23' }
   ],
   docks: [
     { x, y, width, height, heading, labelKey: "map.dock.label" }  // i18n key
   ],
   buoys: [
-    { id: 1, x: 0, y: 0, color: 0xFF6600 }
+    { id: 1, x: 0, y: 0, color: '#FF6600' }
   ],
   objectiveKey: "map.buoy1.objective"  // i18n key — resolved via t()
 }
@@ -184,7 +225,7 @@ Maps are pure data objects in a `MAPS` array. The `GameScene` reads the selected
 ### Map 1 — Single Buoy
 
 - Open water. One orange buoy directly to the north of the start.
-- Default wind: from North (180° — blowing south), 12 kts.
+- Default wind: from North (direction 0°, blowing south), 12 kts.
 - The player must tack upwind to reach the buoy, round it, and run back.
 - **Learning goal**: experience the no-go zone, practice tacking, understand that you can't sail straight into the wind.
 
@@ -198,34 +239,34 @@ Maps are pure data objects in a `MAPS` array. The `GameScene` reads the selected
 
 - Three buoys forming a triangle: one windward mark (north), one reach mark (northeast), one leeward mark (south).
 - Classic racing course: windward leg → reach leg → downwind leg.
-- **Learning goal**: experience all points of sail in sequence in one exercise.
+- **Learning goal**: experience all points of sail in sequence.
 
 ### Map 4 — Island with Dock
 
 - A large island with irregular coastline in the center of the map.
-- One dock on the island's leeward side (marked with a visible target zone rectangle).
-- Shallow reef areas around the island (visually marked, the boat can enter but speed is limited to 1.5 kts in shallow water).
+- One dock on the island's leeward side (marked with a visible target zone).
+- Shallow reef areas around the island (visually marked; boat speed limited to 1.5 kts in shallow water).
 - **Docking succeeds** when the boat overlaps the dock zone at speed < 1 knot, with heading within ±20° of the dock's required approach heading.
-- **Learning goal**: controlled slow-speed maneuvering, wind-aware approach angles, patience.
+- **Learning goal**: controlled slow-speed maneuvering, wind-aware approach angles.
 
 ---
 
-## 6. World Configuration Panel
+## 6. World Configuration
 
-Accessible from the main menu and from the in-game pause menu (gear icon).
+A settings panel accessible from the main menu and from the in-game pause menu.
 
-| Setting | Control | Range | Default |
+| Setting | Control | Range / Options | Default |
 |---|---|---|---|
 | Wind direction | 360° dial | 0–359° | 180° |
 | Wind speed | Slider | 5–25 kts | 12 kts |
-| Wind variability | Toggle | Off / Shifts ±10° slowly | Off |
+| Wind variability | Toggle | Off / On (±10° drift) | Off |
 | Show sail trim guide | Toggle | On / Off | On |
 | Show no-go zone arc | Toggle | On / Off | On |
 | Show wind arrows on water | Toggle | On / Off | On |
 | Language | Button group | `ES` / `EN` | `ES` (Spanish) |
 | Map | Button group | All map IDs | Map 1 |
 
-When **wind variability** is on, wind direction oscillates ±10° over ~20 second cycles using a sine wave with slight random noise — simulating real wind shifts without being chaotic.
+When **wind variability** is on, wind direction oscillates ±10° over ~20-second cycles using a sine wave with slight random noise.
 
 ### Controller Layout
 
@@ -234,198 +275,147 @@ Both on-screen controllers can be repositioned. The Settings panel includes a de
 | Setting | Control | Options | Default |
 |---|---|---|---|
 | Mainsheet Controller position | 3×2 button grid | Top-left / Top-right / Center-left / Center-right / Bottom-left / Bottom-right | Bottom-right |
-| Helm Controller position | 3×2 button grid | Top-left / Top-right / Center-left / Center-right / Bottom-left / Bottom-right | Bottom-left |
+| Helm Controller position | 3×2 button grid | Same options | Bottom-left |
 | Controller opacity | Slider | 40%–100% | 85% |
 
-**Free-drag mode**: a **"Customize Layout"** button enters a special repositioning mode. Both controllers display a move-cursor handle. The user can freely drag each controller to any position on screen. Exiting the mode saves positions. While in this mode, sailing is paused.
+**Free-drag mode**: a "Customize Layout" button enters a repositioning mode where the user can freely drag each controller anywhere on screen. Sailing is paused during this mode. Exiting saves positions.
 
-Controller positions persist across sessions, saved to `localStorage` under the key `sailsim_layout` as `{ mainsheet: { x, y }, helm: { x, y } }`. On game load, saved positions are restored; if none exist, defaults are used.
-
-The two controllers must never overlap: if the user tries to place them in the same region, the second one snaps to the nearest non-overlapping position.
+Controller positions persist to storage (key `sailsim_layout`) as `{ mainsheet: {x, y}, helm: {x, y} }`. Restored on load; defaults used if absent. The two controllers must never overlap — if they would, snap the second to the nearest non-overlapping position.
 
 ---
 
 ## 7. Scenes & Navigation Flow
 
 ```
-MenuScene
-  ├── Map selector (card grid)
+MainMenu
+  ├── Map selector (card grid, names from t(map.nameKey))
   ├── Settings panel (gear icon)
-  └── "Start Sailing" button → GameScene
+  └── "Start Sailing" [t('menu.start')] → GameScene
 
 GameScene
   ├── World: water, islands, buoys, docks
-  ├── Player boat
-  ├── HUD
+  ├── Player boat (physics driven)
+  ├── HUD overlay
+  ├── Mainsheet Controller widget
+  ├── Helm Controller widget
   ├── Pause button → PauseScene (overlay)
-  └── Objective complete → completion banner + "Back to Menu" button
+  └── Objective complete → completion banner + back-to-menu button
 
-PauseScene (overlay on GameScene)
-  ├── Resume
-  ├── Settings (same panel as MenuScene)
-  └── Back to Menu
+PauseScene (overlay on GameScene — world stays rendered behind)
+  ├── Resume  [t('pause.resume')]
+  ├── Settings panel
+  └── Back to Menu  [t('pause.menu')]
+```
+
+State transitions do not lose world state (map, boat position, wind) unless the player explicitly returns to the menu.
+
+---
+
+## 8. Visual Asset Specification
+
+All assets use only programmatic drawing — no external image files. Every asset is described by its visual properties; the specific drawing API used belongs in Part 2.
+
+| Asset | Shape & dimensions | Colors | Behavior |
+|---|---|---|---|
+| **Boat hull** | Elongated pointed polygon, ~60×18px. Bow is the narrow pointed end. | Cream/white fill, dark grey outline | Rotates with boat heading |
+| **Mast** | Filled circle, ~5px radius | Dark grey | Fixed at hull center |
+| **Boom** | Line from mast, ~28px long | Dark grey | Rotates with sail trim angle; always to the downwind side |
+| **Sail** | Filled triangle: mast tip → boom tip → mast base | Semi-transparent white, alpha 0.6 | Follows boom; flaps slightly when luffing |
+| **Wake trail** | Series of line segments behind the boat | White, alpha fades from 0.6 to 0 over 2 seconds | Dashed, updates each frame |
+| **Buoy** | Circle, ~14px radius | Orange fill, white stroke | Number label centered in bold; pulses slightly on rounding |
+| **Island** | Irregular closed polygon | Sandy/tan at edges, green interior (two-layer polygon) | Static world object |
+| **Dock** | Rectangle with alternating light/dark stripes | Tan/brown; target zone in dashed green | Static; target zone highlights when boat is close |
+| **Water background** | Fills entire world | Very dark navy blue with subtle gradient | Small animated wave lines; wind arrows tiled over it |
+| **Wind arrows (water)** | Small chevron arrows tiled across the water | Low opacity (0.2), white/light blue | Point in wind direction; update only when wind changes |
+| **No-go zone arc** | Semi-transparent arc at the bow, ±40° spread | Red, alpha 0.3 | Rotates with boat; togglable |
+| **Mainsheet Controller rope** | Taut: ~100×6px tall thin line with braided cross-hatch. Eased: ~30×18px short wavy segment. Morphs between states. | Rope: warm brown/tan. Background panel: dark, alpha 0.5, rounded corners. | Cleat handle (circle, ~12px) at bottom; drags to control trim |
+| **Helm Controller wheel** | Circle ~80px diameter, 6 spokes, grab handle (~10px circle) on rim. Adjacent mini-boat silhouette (~50×16px) with rudder line at stern. | Wheel: dark wood tone, gold accents. Panel: same as rope controller. | Wheel rotates on drag; rudder line on mini-boat rotates to match; PORT/STBD labels highlight |
+
+---
+
+## 9. Logical Architecture
+
+The game is organized into the following logical units. Each is independent and has a single clear responsibility. Engine-specific implementations of these belong in Part 2.
+
+```
+Game
+│
+├── CONSTANTS              All tuning values in one place — no magic numbers elsewhere
+├── TRANSLATIONS           All user-visible strings (see Section 10)
+├── MAPS                   Array of map data objects (see Section 5)
+│
+├── SailingPhysics         Pure math module — no engine dependency
+│     update(state, delta) → newState
+│     getAWA(heading, windDir) → degrees
+│     getTrimStatus(awa, trimAngle) → trim status key
+│
+├── InputManager           Single source of truth for control state
+│     rudderAxis           number, -1 (full port) to +1 (full starboard)
+│     sailTrimTarget       number, 0° (trimmed) to 85° (eased)
+│     Reads from: MainsheetController, HelmController, keyboard (optional)
+│
+├── MainsheetController    Renders the rope widget; writes to InputManager
+│     draw(trimAngle)
+│     onDrag(delta)
+│     setPosition(x, y)
+│
+├── HelmController         Renders the helm wheel widget; writes to InputManager
+│     draw(rudderAngle)
+│     onDrag(dx, dy)
+│     setPosition(x, y)
+│
+├── LayoutManager          Persists controller positions to storage
+│     save()   load()   enterCustomizeMode()   exitCustomizeMode()
+│
+├── WorldBuilder           Reads a map data object and instantiates world objects
+│     build(map) → { islands, buoys, docks, water }
+│
+├── ObjectiveTracker       Checks completion conditions for the active map
+│     update(boatState, map) → { complete: bool, message: string }
+│
+└── Scenes / Screens
+      MainMenu
+      GameScreen     ← owns game loop: reads InputManager → SailingPhysics → render
+      PauseScreen
+```
+
+Data flows in one direction per frame:
+```
+InputManager → SailingPhysics.update() → boat state → render + HUD + ObjectiveTracker
 ```
 
 ---
 
-## 8. Technical Stack
+## 10. Internationalization (i18n)
 
-| Decision | Choice | Reason |
-|---|---|---|
-| Delivery | Single `index.html` file | Self-contained, no build step |
-| Game library | **Phaser 3** via CDN | Mature, canvas/WebGL, scene management, input, camera |
-| Physics | Custom `SailingPhysics` class | Sailing math is domain-specific; generic physics engines don't model it |
-| Rendering | Phaser WebGL (Canvas fallback) | Phaser default |
-| Assets | Programmatically drawn via Phaser Graphics API | No external image files needed |
-| Scaling | `Phaser.Scale.FIT`, base 800×600 | Works on all screen sizes |
-| Touch input | Phaser built-in pointer events | Unified mouse + touch |
-
----
-
-## 9. Sprites & Visual Assets
-
-**Draw everything with Phaser's Graphics API** — no external image files. The game must be self-contained in one HTML file.
-
-| Asset | Drawing instructions |
-|---|---|
-| **Boat hull** | Pointed polygon (~60×18px), cream/white fill, dark outline. Bow is the narrow end. |
-| **Mast** | Filled circle, 5px radius, dark grey, at hull center |
-| **Boom** | Line from mast, 28px long, dark grey, rotates with trim angle |
-| **Sail** | Filled triangle from mast tip → boom tip → mast base. Semi-transparent white (alpha 0.6). |
-| **Wake trail** | Fading line segments behind the boat. White, alpha decreases with age, dashed style. |
-| **Buoy** | Circle 14px radius, orange fill, white stroke, number label centered in bold. |
-| **Island** | Filled irregular polygon. Tan/sandy fill near edges, green fill interior (two-layer polygon). |
-| **Dock** | Rectangle with alternating light/dark stripes. Target approach zone as dashed rectangle. |
-| **Water** | Tiled rectangle fill with very subtle dark-blue gradient. Animated small wave lines. |
-| **Wind arrows** | Small chevron arrows tiled across the water layer, pointing in wind direction, low opacity (0.2). |
-| **No-go zone arc** | Red semi-transparent arc on the boat, centered at bow, ±40° spread. Alpha 0.3. |
-| **Mainsheet Controller (rope)** | Rope drawn with Graphics. Taut state: tall thin vertical line (~100×6px) with diagonal cross-hatch marks simulating braid texture. Eased state: short wide segment (~30×18px) with 2–3 sine-wave curves along its length indicating slack. Cleat handle: filled circle 12px radius at the bottom. Text label below (font: monospace bold 12px). Background: semi-transparent dark rounded rect (alpha 0.5, corner radius 10px). The rope shape lerps smoothly between taut and eased states as trim changes. |
-| **Helm Controller (wheel)** | Wheel: circle outline ~80px diameter, 6 evenly-spaced spoke lines from center to rim, small filled circle 10px on the rim as the grab handle (highlighted in yellow when active). Spokes: thin lines, dark grey. Mini-boat silhouette: filled elongated pointed polygon (~50×16px) drawn immediately below or beside the wheel inside the same panel. Rudder: short line (14px) at the stern end of the silhouette that rotates proportionally to the helm angle. PORT / STBD labels: small caps text flanking the wheel, active side brightens when helm is deflected. Background: same semi-transparent rounded rect as the Mainsheet Controller. |
-
----
-
-## 10. Code Architecture
-
-Organize the single HTML file into clearly labeled sections with comment headers:
-
-```
-index.html
-│
-├── <style>
-│     Full-screen canvas, no margins, dark background during load
-│
-├── <script src="phaser CDN">
-│
-└── <script>   (game code, organized top-to-bottom)
-    │
-    ├── CONSTANTS          Object with all tuning values (no magic numbers elsewhere)
-    ├── TRANSLATIONS       i18n strings object, all user-visible text (see Section 12)
-    │     t(key) → string   global helper, falls back en → key
-    │     setLanguage(code) saves to localStorage, triggers UI refresh
-    ├── MAPS               Array of map data objects (see Section 5)
-    ├── SailingPhysics     Class — pure math, no Phaser dependency
-    │     methods: update(state, input, delta) → newState
-    │               getAWA(heading, windDir)
-    │               getTrimStatus(awa, trimAngle) → 'luffing'|'trimmed'|'stalled'
-    │
-    ├── InputManager       Class — normalizes mouse + touch into unified input state
-    │     properties: rudderAxis (-1 to 1), sailTrimTarget (0–85°)
-    │
-    ├── MainsheetController  Class — renders and handles the rope widget
-    │     draw(graphics, trimAngle)   redraws rope shape each frame
-    │     onDrag(dy)                  updates sailTrimTarget via InputManager
-    │     setPosition(x, y)           repositions the widget on screen
-    │
-    ├── HelmController       Class — renders and handles the helm wheel widget
-    │     draw(graphics, rudderAngle) redraws wheel + mini-boat each frame
-    │     onDrag(dx, dy)              updates rudderAxis via InputManager
-    │     setPosition(x, y)           repositions the widget on screen
-    │
-    ├── LayoutManager        Class — persists controller positions to localStorage
-    │     save()  load()  enterCustomizeMode()  exitCustomizeMode()
-    │
-    ├── MenuScene          Phaser Scene
-    ├── GameScene          Phaser Scene
-    │     — builds world from map data object passed via scene.start()
-    │     — owns boat state, calls SailingPhysics.update() each frame
-    │     — draws HUD via Phaser GameObjects.Text + Graphics
-    │
-    ├── PauseScene         Phaser Scene (overlay)
-    │
-    └── Phaser.Game config + game instantiation
-```
-
----
-
-## 11. Code Best Practices
-
-- **Constants object**: all tunable numbers live in one `CONSTANTS` block at the top.
-  ```js
-  const CONSTANTS = {
-    NO_GO_ZONE_DEG: 40,
-    MAX_RUDDER_ANGLE: 45,
-    BOAT_DRAG: 0.97,
-    TACK_PENALTY_FACTOR: 0.7,
-    TACK_PENALTY_DURATION_MS: 1000,
-    SHALLOW_SPEED_LIMIT: 1.5,
-    DOCK_SUCCESS_SPEED: 1.0,
-    DOCK_SUCCESS_HEADING_TOLERANCE: 20,
-    // ...
-  };
-  ```
-
-- **Frame-rate independent**: all physics uses `delta` (seconds). Always multiply velocity changes by `delta`.
-  ```js
-  // correct
-  boatSpeed = lerp(boatSpeed, targetSpeed, CONSTANTS.ACCEL * delta);
-  ```
-
-- **No map-specific code in scenes**: `GameScene.create()` receives `this.scene.settings.data.map` and builds everything from it.
-
-- **Input abstraction**: `InputManager` is the only place that reads pointer/touch events. The rest of the code reads from `input.rudderAxis` and `input.sailTrimTarget`.
-
-- **Camera**: `this.cameras.main.startFollow(boatSprite, true, 0.1, 0.1)` — lerp following, not snap.
-
-- **Collision with islands**: use `Phaser.Geom.Polygon.Contains()` — not physics bodies.
-
-- **Mobile ergonomics**: all interactive controls (slider, rudder zones) must have a minimum tap target of 48×48px. The sail trim slider should be tall enough to use with a thumb.
-
-- **Performance**: wind arrows are a single static Graphics object drawn once and updated only when wind direction changes — not redrawn every frame.
-
-- Keep related logic co-located. If a section exceeds ~120 lines, extract it into a named class or function block.
-
----
-
-## 12. Internationalization (i18n)
-
-All text visible to the player must come from the centralized `TRANSLATIONS` object. No string is ever hardcoded in widget draw functions, scene `create()`, or `update()` — always call `t(key)`.
+All text visible to the player must come from the centralized `TRANSLATIONS` object. No string is ever hardcoded in widget draw functions or screen logic — always call `t(key)`.
 
 ### Language setup
 
 - Default language: **Spanish** (`'es'`).
 - Bundled languages: Spanish (`'es'`) and English (`'en'`).
-- Selected language saved to `localStorage` under key `sailsim_lang` and restored on load.
-- Switching language applies immediately — all active `Phaser.GameObjects.Text` objects call `.setText(t(key))` without a scene restart.
+- Selected language saved to persistent storage under key `sailsim_lang` and restored on load.
+- Switching language applies immediately — all active text elements refresh without a full restart.
 
 ### t() function
 
 ```js
-let currentLang = localStorage.getItem('sailsim_lang') || 'es';
+let currentLang = storage.get('sailsim_lang') || 'es';
 
 function t(key) {
-  return TRANSLATIONS[currentLang]?.[key] ?? TRANSLATIONS['en'][key] ?? key;
+  return TRANSLATIONS[currentLang]?.[key]
+      ?? TRANSLATIONS['en'][key]
+      ?? key;                   // fallback: show the key itself, never crash
 }
 
 function setLanguage(lang) {
   currentLang = lang;
-  localStorage.setItem('sailsim_lang', lang);
-  EventBus.emit('lang-changed');   // all scenes listen and refresh their text objects
+  storage.set('sailsim_lang', lang);
+  events.emit('lang-changed'); // all screens listen and refresh their text elements
 }
 ```
 
-Fallback chain: current language → English → raw key. Missing translations never crash the game.
-
-### TRANSLATIONS object — required keys
+### TRANSLATIONS object — complete key list
 
 ```js
 const TRANSLATIONS = {
@@ -494,7 +484,7 @@ const TRANSLATIONS = {
     'aid.awa_label':           'AV Aparente',
 
     // Layout customize mode
-    'layout.mode_banner':      'Arrastrá los controles a donde más te cómodo',
+    'layout.mode_banner':      'Arrastrá los controles a donde te quede más cómodo',
     'layout.done':             'Listo',
   },
 
@@ -571,65 +561,196 @@ const TRANSLATIONS = {
 
 ### Adding a new language
 
-Add a new top-level key (e.g. `'pt'`) to `TRANSLATIONS` with all the same keys. Add that code to the Language selector button group in Settings. No other code changes are needed.
+Add a new top-level key (e.g. `'pt'`) with all the same keys. Add that code to the Language selector in Settings. No other code changes needed.
 
 ### Rules
 
 - Every string visible to the player MUST have an entry in both `'es'` and `'en'` blocks.
-- Map `nameKey` and `objectiveKey` fields are i18n keys, resolved at render time via `t()` — never raw strings.
-- The `TRANSLATIONS` object is defined before any scene code so `t()` is available globally from the first frame.
+- Map `nameKey` and `objectiveKey` fields are i18n keys resolved at render time via `t()`.
+- `TRANSLATIONS` is defined before any screen/scene code so `t()` is available globally from the first frame.
 
 ---
 
-## 13. Learning Aids (Toggleable)
+## 11. Learning Aids (Toggleable)
 
-These are visual overlays to help beginners understand what's happening. All togglable via Settings.
+Visual overlays to help beginners understand what's happening. All togglable via Settings.
 
-| Aid | What it shows |
-|---|---|
-| **No-go zone arc** | Red arc in front of bow showing the wind angle range where sailing is impossible |
-| **Sail trim guide** | Ghost position of where the boom *should* be for optimal trim (thin dashed line) |
-| **Wind arrows on water** | Low-opacity directional arrows across the water background |
-| **AWA readout** | Small number near the boat showing current Apparent Wind Angle in degrees (for advanced learners) |
-
-When `showSailTrimGuide` is true, render a dashed boom line at the optimal trim angle alongside the actual boom. This teaches the player to match their trim to the guide.
-
----
-
-## 14. Audio (Optional Enhancement)
-
-If audio is implemented, use the Web Audio API directly (no external library needed).
-
-| Sound | Trigger | Description |
+| Aid | i18n key | What it shows |
 |---|---|---|
-| Water ambience | Always | Low looping ocean sound |
-| Sail luff | AWA < 40° | Flapping fabric sound |
-| Tack/jibe | On event | Short whoosh sound |
+| **No-go zone arc** | `aid.no_go` | Red arc in front of the bow, ±40° — the range where sailing is impossible |
+| **Sail trim guide** | `aid.trim_guide` | Ghost boom line showing the *optimal* trim angle for the current AWA (dashed) |
+| **Wind arrows on water** | — | Low-opacity directional arrows across the water background |
+| **AWA readout** | `aid.awa_label` | Small number near the boat showing current Apparent Wind Angle in degrees |
+
+When the trim guide is on, render a dashed boom line at the optimal angle alongside the actual boom. The player learns to match the solid boom to the dashed guide.
+
+---
+
+## 12. Audio
+
+All sounds should be synthesized procedurally or embedded inline — no external audio files.
+
+| Sound | Trigger | Character |
+|---|---|---|
+| Water ambience | Always | Low looping ocean background |
+| Sail luff | AWA < 40° | Flapping fabric sound, intensity proportional to speed |
+| Tack / jibe | On `justTacked` or `justJibed` event | Short whoosh |
 | Dock success | On objective complete | Pleasant chime |
 
-All sounds synthesized procedurally via `AudioContext.createOscillator()` or loaded as short Base64 encoded data URIs embedded in the HTML.
+---
+
+# PART 2 — Implementation: Web / Phaser
+
+> This part is platform-specific. To build for a different target, **replace all sections
+> below** with the equivalent for your engine (e.g. "Implementation: Godot 4",
+> "Implementation: Unity WebGL") and leave Part 1 completely unchanged.
+>
+> Current target: **Single HTML file, Phaser (verify current stable version at phaser.io)**.
 
 ---
 
-## 15. Completion Criteria
+## 13. Technical Stack
 
-The game is considered complete when:
+| Decision | Choice | Reason |
+|---|---|---|
+| Delivery | Single `index.html` file | Self-contained, no build step |
+| Game library | **Phaser** (latest stable — verify at phaser.io) loaded via CDN | Mature, canvas/WebGL, scene management, input, camera |
+| Physics | Custom `SailingPhysics` class (see Section 4) | Sailing math is domain-specific; do NOT use Phaser Arcade Physics or Matter.js |
+| Rendering | Phaser WebGL (Canvas fallback) | Phaser default |
+| Assets | Programmatically drawn via Phaser Graphics API | No external image files — single file delivery |
+| Scaling | `Phaser.Scale.FIT`, base 800×600 | Works on all screen sizes |
+| Touch input | Phaser built-in pointer events | Unified mouse + touch |
+| Persistence | `localStorage` | Controller positions, language preference |
 
-- [ ] All 4 maps load and are playable.
-- [ ] Mainsheet Controller rope widget responds to drag: long-thin when trimmed, short-wide when eased. Text label updates correctly for all 5 states.
-- [ ] Helm Controller wheel rotates on drag. Mini-boat silhouette rudder moves in sync. PORT/STBD labels highlight correctly.
-- [ ] Both controllers work on mouse and touch.
-- [ ] Both controllers can be repositioned via the 3×2 grid in settings and via free-drag Customize Layout mode.
-- [ ] Controller positions persist in localStorage across page reloads.
-- [ ] The sailing physics model produces realistic behavior: you can't sail into the wind, beam reach is fastest, running is slower than reaching.
-- [ ] Tacking and jibing work correctly (boom swings, speed penalty applies).
-- [ ] The no-go zone arc and sail trim guide are visible and toggle correctly.
-- [ ] Docking on Map 4 detects success correctly.
-- [ ] The settings panel changes wind and toggles learning aids.
-- [ ] The game runs smoothly on a modern mobile browser (60fps target).
-- [ ] Everything is contained in a single `index.html` file.
-- [ ] All user-visible strings come from `TRANSLATIONS` via `t()` — no hardcoded text in scene or widget code.
+---
+
+## 14. Rendering & Assets — Phaser Implementation
+
+Use **`Phaser.GameObjects.Graphics`** to draw all assets described in Section 8. No external textures.
+
+| Asset | Phaser drawing approach |
+|---|---|
+| **Boat hull** | `graphics.fillStyle(...).fillPoints(polygon, true)` with a pointed array of vertices |
+| **Mast** | `graphics.fillCircle(x, y, 5)` |
+| **Boom** | `graphics.lineBetween(mx, my, bx, by)` — rotate the Graphics object with `setAngle()` |
+| **Sail** | `graphics.fillTriangle(...)`, `graphics.setAlpha(0.6)` |
+| **Wake trail** | Array of recent positions; draw with `graphics.strokePoints()`, decreasing alpha per segment |
+| **Buoy** | `graphics.strokeCircle()` + `this.add.text()` for label |
+| **Island** | `graphics.fillPoints(polygon)` with two passes (sandy outer, green inner) |
+| **Dock** | `graphics.fillRect()` repeated for stripes; dashed rectangle via short `lineBetween` segments |
+| **Water** | `graphics.fillRect(0, 0, worldW, worldH)` in dark navy; wave lines as thin `lineBetween` calls updated each frame |
+| **Wind arrows** | Generate once on a `RenderTexture` via `graphics.fillTriangle()`; update only when wind changes |
+| **No-go zone arc** | `graphics.slice(x, y, r, startAngle, endAngle)` in red with `setAlpha(0.3)`; child of boat |
+| **Rope controller** | `graphics.strokeLineShape()` for taut state; `graphics.strokePoints(curvedPath)` for eased state |
+| **Helm controller** | `graphics.strokeCircle()` for wheel rim, `graphics.lineBetween()` for spokes, `graphics.fillCircle()` for grab handle |
+
+All interactive widget Graphics objects live in a fixed camera (not the world camera) so they don't scroll with the map.
+
+---
+
+## 15. Code Architecture — Phaser
+
+Organize the single HTML file into clearly labeled sections with comment headers:
+
+```
+index.html
+│
+├── <style>
+│     Full-screen canvas, no margins, dark background during load
+│
+├── <script src="https://cdn.phaser.io/...phaser.min.js">
+│     Use the current stable Phaser CDN URL from phaser.io
+│
+└── <script>  (game code, organized top-to-bottom)
+    │
+    ├── CONSTANTS            Tuning values — no magic numbers elsewhere
+    ├── TRANSLATIONS         i18n strings + t() + setLanguage() (Section 10)
+    ├── MAPS                 Map data objects array (Section 5)
+    │
+    ├── SailingPhysics       Class — pure math (Section 4 interface)
+    ├── InputManager         Class — reads Phaser pointer events, exposes rudderAxis + sailTrimTarget
+    ├── MainsheetController  Class — Phaser Graphics widget (Section 3)
+    ├── HelmController       Class — Phaser Graphics widget (Section 3)
+    ├── LayoutManager        Class — reads/writes localStorage for controller positions
+    ├── ObjectiveTracker     Class — checks buoy rounding and docking completion
+    │
+    ├── MenuScene            Phaser.Scene
+    ├── GameScene            Phaser.Scene
+    │     create(): reads this.scene.settings.data.map, builds world via WorldBuilder
+    │     update(time, delta): InputManager → SailingPhysics → move boat → draw HUD
+    │
+    ├── PauseScene           Phaser.Scene (launched as overlay, GameScene stays active)
+    │
+    └── new Phaser.Game({ ... })
+```
+
+Camera setup: `gameScene.cameras.main.startFollow(boatSprite, true, 0.1, 0.1)` (lerp follow). Controller widgets use a separate fixed camera via `setScrollFactor(0)` or a dedicated UI camera.
+
+---
+
+## 16. Code Best Practices — Phaser
+
+- **Constants object**: all tunable numbers in one `CONSTANTS` block.
+  ```js
+  const CONSTANTS = {
+    NO_GO_ZONE_DEG: 40,
+    MAX_RUDDER_ANGLE: 45,
+    BOAT_DRAG: 0.97,
+    TACK_PENALTY_FACTOR: 0.7,
+    TACK_PENALTY_DURATION_MS: 1000,
+    SHALLOW_SPEED_LIMIT: 1.5,
+    DOCK_SUCCESS_SPEED: 1.0,
+    DOCK_SUCCESS_HEADING_TOLERANCE: 20,
+  };
+  ```
+
+- **Frame-rate independent**: all physics multiplied by `delta` (in seconds).
+  ```js
+  boatSpeed = lerp(boatSpeed, targetSpeed, CONSTANTS.ACCEL * delta);
+  ```
+
+- **No map-specific code in scenes**: `GameScene.create()` receives `this.scene.settings.data.map` and delegates entirely to `WorldBuilder.build(map)`.
+
+- **Input abstraction**: `InputManager` is the only place Phaser pointer events are read. Everything else reads `inputManager.rudderAxis` and `inputManager.sailTrimTarget`.
+
+- **Collision**: use `Phaser.Geom.Polygon.Contains()` for island/dock detection — not physics bodies.
+
+- **Mobile tap targets**: all interactive controls must have a minimum hit area of 48×48px.
+
+- **Wind arrows**: drawn once onto a `RenderTexture`; invalidated and redrawn only when wind direction changes — not every frame.
+
+- **i18n in Phaser**: store a reference to every `Phaser.GameObjects.Text` that displays translated content. On `events.emit('lang-changed')`, call `.setText(t(key))` on each one.
+
+- Keep each class under ~120 lines. Extract if larger.
+
+---
+
+## 17. Completion Criteria
+
+### Part 1 — Design & Logic (engine-agnostic)
+
+- [ ] All 4 maps are defined as data objects and are fully playable.
+- [ ] Sailing physics produce realistic behavior: no-go zone blocks progress, beam reach is fastest, running is slower than reaching.
+- [ ] Tacking and jibing fire correctly (boom swings, speed penalty applies, `justTacked`/`justJibed` flags fire once).
+- [ ] Mainsheet Controller rope morphs correctly: long-thin when trimmed, short-wide when eased.
+- [ ] Trim status label shows the correct i18n key for all 5 states.
+- [ ] Helm Controller wheel rotates on drag; rudder line on mini-boat silhouette moves in sync.
+- [ ] PORT/STBD labels highlight correctly when helm is deflected.
+- [ ] Both controllers can be repositioned via the 3×2 grid and via free-drag Customize Layout mode.
+- [ ] Controller positions persist to storage and are restored on reload.
+- [ ] Docking on Map 4 detects success correctly (speed + heading tolerance).
+- [ ] No-go zone arc and sail trim guide toggle correctly.
+- [ ] All user-visible strings come from `TRANSLATIONS` via `t()` — no hardcoded text anywhere.
 - [ ] The game launches in Spanish by default.
-- [ ] Switching to English from Settings updates all on-screen text immediately without a scene restart.
-- [ ] Selected language persists in `localStorage` across page reloads.
-- [ ] Both `'es'` and `'en'` blocks in `TRANSLATIONS` are complete (no missing keys).
+- [ ] Switching to English refreshes all on-screen text immediately.
+- [ ] Language preference persists to storage and is restored on reload.
+- [ ] Both `'es'` and `'en'` translation blocks are complete — no missing keys.
+
+### Part 2 — Web / Phaser Implementation
+
+- [ ] Everything is contained in a single `index.html` file.
+- [ ] Both controllers work on mouse and touch.
+- [ ] The game scales correctly to any screen size (desktop and mobile).
+- [ ] Wind arrows are drawn on a RenderTexture and not redrawn every frame.
+- [ ] The game runs at 60fps on a modern mobile browser.
+- [ ] Settings panel changes wind direction, speed, and variability in real time.
