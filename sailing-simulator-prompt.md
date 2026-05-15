@@ -342,11 +342,11 @@ All assets use only programmatic drawing — no external image files. Every asse
 | **Mast** | Filled circle, ~5px radius | Dark grey | Fixed at hull center |
 | **Boom** | Line from mast, ~28px long | Dark grey | Rotates with sail trim angle; always to the downwind side |
 | **Sail** | Filled triangle: mast tip → boom tip → mast base | Semi-transparent white, alpha 0.6 | Follows boom; flaps slightly when luffing |
-| **Wake trail** | Series of line segments behind the boat | White, alpha fades from 0.6 to 0 over 2 seconds | Dashed, updates each frame |
+| **Wake trail (V-wake)** | Two diverging arms from the stern forming a V-shape. Each arm is built from the last ~1.5 s of boat positions, offset laterally from the path. The offset at each stored point grows with age and speed: `offset = (age / 1.5) × maxSpread × (boatSpeed / 15)`. At full speed (~15 kts) the spread reaches ~35 px to each side at the tail. Below 0.5 kts no wake is drawn. | White / very light blue. Alpha at each point: `1 - (age / 1.5)` — fully opaque at stern, transparent at tail. | Length is naturally speed-dependent: fast boat = positions spread far apart = long wide V. Slow boat = positions close together = short narrow trace. Gives immediate visual sense of speed. |
 | **Buoy** | Circle, ~14px radius | Orange fill, white stroke | Number label centered in bold; pulses slightly on rounding |
 | **Island** | Irregular closed polygon | Sandy/tan at edges, green interior (two-layer polygon) | Static world object |
 | **Dock** | Rectangle with alternating light/dark stripes | Tan/brown; target zone in dashed green | Static; target zone highlights when boat is close |
-| **Water background** | Fills entire world | Very dark navy blue with subtle gradient | Small animated wave lines; wind arrows tiled over it |
+| **Water background** | Fills entire world. Base layer: solid fill. Over it: a layer of short animated dashes drifting in the wind direction, density and intensity driven by wind speed (see wind-reactive water table below). | Base: dark navy blue. Dash color: light blue/white at varying alpha. Stronger wind makes the water subtly darker. | Dashes tile seamlessly and wrap at world edges. Wind speed changes re-parameterize the animation in real time. |
 | **Wind arrows (water)** | Small chevron arrows tiled across the water | Low opacity (0.2), white/light blue | Point in wind direction; update only when wind changes |
 | **No-go zone arc** | Semi-transparent arc at the bow, ±40° spread | Red, alpha 0.3 | Rotates with boat; togglable |
 | **Mainsheet Controller rope** | Taut: ~100×6px tall thin line with braided cross-hatch. Eased: ~30×18px short wavy segment. Morphs between states. | Rope: warm brown/tan. Background panel: dark, alpha 0.5, rounded corners. | Cleat handle (circle, ~12px) at bottom; drags to control trim |
@@ -356,6 +356,31 @@ All assets use only programmatic drawing — no external image files. Every asse
 | **Velocity vector** | Arrow from hull center in actual movement direction (heading + leeway). Length proportional to boat speed (10px per knot). Arrowhead at tip. | Bright green. | May diverge from heading vector when leeway is present — the gap between the two is educationally significant. Togglable. |
 | **Inertia / Displacement indicator** | Small floating panel near the boat: two stacked horizontal bars — "Target" (dashed, white) and "Current" (solid, green). Bars represent speed. Gap between them shows how much inertia is delaying the response. Text label below: displacement value and class name. | Panel: dark semi-transparent. Bars: green (current) and white dashed (target). Label text: dim white. | Bars update every frame. Gap closes as boat accelerates/decelerates toward target. Togglable. |
 | **Indicators button** | Small square icon button in the HUD corner. Shows a vector/eye icon. | Semi-transparent dark background, white icon. | Opens/closes the IndicatorsPanel floating window. |
+
+### Wind-reactive water — parameter tiers
+
+The water dash animation has three tiers, selected by current wind speed. Transitions between tiers are smooth (lerp parameters over ~1 second when wind speed crosses a threshold).
+
+| Tier | Wind speed | Dash count (per screen) | Dash length | Amplitude | Drift speed | Dash alpha | Water base |
+|---|---|---|---|---|---|---|---|
+| **Calm** | < 10 kts | 20 | 8 px | 2 px | 0.3 | 0.07 | Dark navy |
+| **Choppy** | 10–18 kts | 45 | 13 px | 5 px | 0.8 | 0.15 | Navy, slightly darker |
+| **Rough** | > 18 kts | 80 | 18 px | 9 px | 1.5 | 0.25 | Dark grey-blue |
+
+- **Dash count**: number of dashes visible on screen at any time, spread across the world in a grid with random offsets.
+- **Amplitude**: dashes are not straight — they follow a short sine-wave path, amplitude = max pixel deviation from a straight line.
+- **Drift speed**: dashes move in the wind direction at this multiplier × `windSpeed` px/s. At rest they wrap around to the other side of the screen.
+- At the **Rough** tier, add a second layer of slightly larger dashes at 45° offset to the first, giving the appearance of crossed chop.
+- The dash grid is defined in world space (not screen space), so it scrolls correctly as the camera follows the boat.
+
+### V-wake — speed reference
+
+| Boat speed | Wake character |
+|---|---|
+| < 0.5 kts | No wake |
+| 0.5–3 kts | Very short, barely visible narrow trace |
+| 3–8 kts | Clear V, moderate spread, ~15–20 px wide at tail |
+| 8–15 kts | Prominent V, ~30–35 px wide at tail, clearly animated |
 
 ---
 
@@ -772,8 +797,10 @@ Use **`Phaser.GameObjects.Graphics`** to draw all assets described in Section 8.
 | **Buoy** | `graphics.strokeCircle()` + `this.add.text()` for label |
 | **Island** | `graphics.fillPoints(polygon)` with two passes (sandy outer, green inner) |
 | **Dock** | `graphics.fillRect()` repeated for stripes; dashed rectangle via short `lineBetween` segments |
-| **Water** | `graphics.fillRect(0, 0, worldW, worldH)` in dark navy; wave lines as thin `lineBetween` calls updated each frame |
-| **Wind arrows** | Generate once on a `RenderTexture` via `graphics.fillTriangle()`; update only when wind changes |
+| **Water base** | `graphics.fillRect(0, 0, worldW, worldH)` in dark navy; color tweened toward grey-blue as wind speed increases |
+| **Water dashes (wind-reactive)** | Pool of dash objects (plain objects with `{x, y, angle, phase}`). Each frame: advance `x += driftSpeed * windDx * delta`, `y += driftSpeed * windDy * delta`; wrap at world bounds. Draw each dash as a short `strokePoints` of 3–4 sine-offset points. Re-parameterize count/length/alpha when wind tier changes (lerp over 60 frames). Do NOT recreate the pool on tier change — adjust properties in place. |
+| **Wake (V-wake)** | Rolling array of `{x, y, age}` — push current boat position every frame, remove entries where `age > 1.5s`. On each draw: iterate array, compute lateral offset per entry (`offset = (age/1.5) * 35 * (speed/15)`), draw port and starboard offset points as two `strokePoints` paths with per-point alpha. Use `graphics.clear()` + redraw each frame (wake is fast to draw — only ~60 points). |
+| **Wind arrows** | Generate once on a `RenderTexture` via `graphics.fillTriangle()`; update only when wind direction changes |
 | **No-go zone arc** | `graphics.slice(x, y, r, startAngle, endAngle)` in red with `setAlpha(0.3)`; child of boat |
 | **Rope controller** | `graphics.strokeLineShape()` for taut state; `graphics.strokePoints(curvedPath)` for eased state |
 | **Helm controller** | `graphics.strokeCircle()` for wheel rim, `graphics.lineBetween()` for spokes, `graphics.fillCircle()` for grab handle |
@@ -881,6 +908,10 @@ Camera setup: `gameScene.cameras.main.startFollow(boatSprite, true, 0.1, 0.1)` (
 - [ ] When both heading and velocity vectors are active simultaneously, the leeway angle gap is clearly visible.
 - [ ] Inertia indicator shows target speed bar and current speed bar; the gap is visually large after a tack and closes gradually.
 - [ ] Inertia gap closes noticeably faster with Light displacement than with Heavy displacement.
+- [ ] V-wake is not drawn below 0.5 kts. At 3+ kts it forms a clear diverging V. At 8+ kts the V is wide and prominent.
+- [ ] Wake length and width scale naturally with speed (long/wide at speed, short/narrow when slow).
+- [ ] Water dashes transition smoothly between Calm / Choppy / Rough tiers as wind speed changes.
+- [ ] At Rough tier (>18 kts), water is visually noticeably more agitated than at Calm tier (<10 kts).
 - [ ] Indicator on/off states persist to storage and are restored on reload.
 - [ ] Boat displacement setting in World Configuration changes how quickly the boat accelerates/decelerates.
 - [ ] All user-visible strings come from `TRANSLATIONS` via `t()` — no hardcoded text anywhere.
