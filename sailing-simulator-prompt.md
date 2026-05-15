@@ -165,19 +165,38 @@ When AWA crosses 0° (bow passes through the wind), the boom automatically swing
 
 When AWA crosses 180° (stern passes through the wind), the boom swings to the other side abruptly. Apply a 20% speed penalty for 0.5 seconds.
 
+### Boat displacement
+
+Displacement is the boat's weight (tonnes of water displaced). It controls how quickly the boat responds to changes in sail trim or conditions — a heavier boat accelerates and decelerates more slowly.
+
+| Displacement class | Value | Lerp factor multiplier | Feel |
+|---|---|---|---|
+| Light (Ligero) | 0.8 t | ×1.8 | Snappy, quick to respond |
+| Medium (Medio) | 2.0 t | ×1.0 | Balanced (default) |
+| Heavy (Pesado) | 5.0 t | ×0.45 | Sluggish, high inertia |
+
+The `lerpFactor` passed to the speed calculation becomes:
+```js
+const lerpFactor = CONSTANTS.BASE_ACCEL * displacementMultiplier * delta;
+boatSpeed = lerp(boatSpeed, targetSpeed, lerpFactor);
+```
+
+This means after a tack, a heavy boat takes noticeably longer to rebuild speed — which the Visual Indicators Panel can make visible (see Section 12).
+
 ### SailingPhysics interface
 
 ```js
 // Input
 {
-  boatHeading: number,    // degrees
-  boatSpeed: number,      // knots
+  boatHeading: number,        // degrees
+  boatSpeed: number,          // knots
   boatPosition: {x, y},
-  windDirection: number,  // degrees
-  windSpeed: number,      // knots
-  sailTrimAngle: number,  // 0–85°
-  rudderAngle: number,    // -45° to +45°
-  delta: number,          // seconds since last frame
+  windDirection: number,      // degrees
+  windSpeed: number,          // knots
+  sailTrimAngle: number,      // 0–85°
+  rudderAngle: number,        // -45° to +45°
+  displacement: number,       // tonnes — affects inertia lerp factor
+  delta: number,              // seconds since last frame
 }
 
 // Output
@@ -260,6 +279,7 @@ A settings panel accessible from the main menu and from the in-game pause menu.
 | Wind direction | 360° dial | 0–359° | 180° |
 | Wind speed | Slider | 5–25 kts | 12 kts |
 | Wind variability | Toggle | Off / On (±10° drift) | Off |
+| Boat displacement | Selector | Light (0.8 t) / Medium (2.0 t) / Heavy (5.0 t) | Medium |
 | Show sail trim guide | Toggle | On / Off | On |
 | Show no-go zone arc | Toggle | On / Off | On |
 | Show wind arrows on water | Toggle | On / Off | On |
@@ -298,6 +318,7 @@ GameScene
   ├── HUD overlay
   ├── Mainsheet Controller widget
   ├── Helm Controller widget
+  ├── Indicators button (eye/vector icon) → IndicatorsPanel (floating overlay)
   ├── Pause button → PauseScene (overlay)
   └── Objective complete → completion banner + back-to-menu button
 
@@ -330,6 +351,11 @@ All assets use only programmatic drawing — no external image files. Every asse
 | **No-go zone arc** | Semi-transparent arc at the bow, ±40° spread | Red, alpha 0.3 | Rotates with boat; togglable |
 | **Mainsheet Controller rope** | Taut: ~100×6px tall thin line with braided cross-hatch. Eased: ~30×18px short wavy segment. Morphs between states. | Rope: warm brown/tan. Background panel: dark, alpha 0.5, rounded corners. | Cleat handle (circle, ~12px) at bottom; drags to control trim |
 | **Helm Controller wheel** | Circle ~80px diameter, 6 spokes, grab handle (~10px circle) on rim. Adjacent mini-boat silhouette (~50×16px) with rudder line at stern. | Wheel: dark wood tone, gold accents. Panel: same as rope controller. | Wheel rotates on drag; rudder line on mini-boat rotates to match; PORT/STBD labels highlight |
+| **Wind vector arrow** | Arrow from boat center, direction = where wind comes FROM. Length proportional to wind speed (8px per knot, max 120px). Arrowhead at tip. Small speed label beside arrow tip. | Sky blue / light blue. | Rotates with live wind direction; length scales with wind speed. Togglable. |
+| **Heading vector (crujía)** | Line from hull center forward along boat heading angle. Fixed length ~80px. Arrowhead at tip. | Bright white / cyan. | Rotates with boat heading. Togglable. |
+| **Velocity vector** | Arrow from hull center in actual movement direction (heading + leeway). Length proportional to boat speed (10px per knot). Arrowhead at tip. | Bright green. | May diverge from heading vector when leeway is present — the gap between the two is educationally significant. Togglable. |
+| **Inertia / Displacement indicator** | Small floating panel near the boat: two stacked horizontal bars — "Target" (dashed, white) and "Current" (solid, green). Bars represent speed. Gap between them shows how much inertia is delaying the response. Text label below: displacement value and class name. | Panel: dark semi-transparent. Bars: green (current) and white dashed (target). Label text: dim white. | Bars update every frame. Gap closes as boat accelerates/decelerates toward target. Togglable. |
+| **Indicators button** | Small square icon button in the HUD corner. Shows a vector/eye icon. | Semi-transparent dark background, white icon. | Opens/closes the IndicatorsPanel floating window. |
 
 ---
 
@@ -373,6 +399,17 @@ Game
 ├── ObjectiveTracker       Checks completion conditions for the active map
 │     update(boatState, map) → { complete: bool, message: string }
 │
+├── IndicatorsPanel        Floating toggle window; renders physics vectors onto the world
+│     open()  close()  toggle()
+│     indicators: {
+│       windVector:    { enabled: bool, draw(boatState, windState) }
+│       headingVector: { enabled: bool, draw(boatState) }
+│       velocityVector:{ enabled: bool, draw(boatState) }
+│       inertiaBar:    { enabled: bool, draw(boatState) }
+│     }
+│     Each draw() function receives current boat/wind state and renders directly
+│     into the world-space overlay layer each frame (only when enabled).
+│
 └── Scenes / Screens
       MainMenu
       GameScreen     ← owns game loop: reads InputManager → SailingPhysics → render
@@ -381,7 +418,7 @@ Game
 
 Data flows in one direction per frame:
 ```
-InputManager → SailingPhysics.update() → boat state → render + HUD + ObjectiveTracker
+InputManager → SailingPhysics.update() → boatState → render + HUD + ObjectiveTracker + IndicatorsPanel
 ```
 
 ---
@@ -486,6 +523,20 @@ const TRANSLATIONS = {
     // Layout customize mode
     'layout.mode_banner':      'Arrastrá los controles a donde te quede más cómodo',
     'layout.done':             'Listo',
+
+    // Visual Indicators Panel
+    'indicators.button_label': 'Indicadores',
+    'indicators.panel_title':  'Indicadores Visuales',
+    'indicators.wind_vector':  'Vector de viento',
+    'indicators.heading':      'Dirección de crujía',
+    'indicators.velocity':     'Vector de velocidad',
+    'indicators.inertia':      'Inercia del barco',
+    'indicators.displacement': 'Desplazamiento',
+    'indicators.disp_light':   'Ligero',
+    'indicators.disp_medium':  'Medio',
+    'indicators.disp_heavy':   'Pesado',
+    'indicators.target_speed': 'Vel. objetivo',
+    'indicators.current_speed':'Vel. actual',
   },
 
   en: {
@@ -555,6 +606,20 @@ const TRANSLATIONS = {
     // Layout customize mode
     'layout.mode_banner':      'Drag the controllers to wherever feels comfortable',
     'layout.done':             'Done',
+
+    // Visual Indicators Panel
+    'indicators.button_label': 'Indicators',
+    'indicators.panel_title':  'Visual Indicators',
+    'indicators.wind_vector':  'Wind vector',
+    'indicators.heading':      'Heading vector (keel line)',
+    'indicators.velocity':     'Velocity vector',
+    'indicators.inertia':      'Boat inertia',
+    'indicators.displacement': 'Displacement',
+    'indicators.disp_light':   'Light',
+    'indicators.disp_medium':  'Medium',
+    'indicators.disp_heavy':   'Heavy',
+    'indicators.target_speed': 'Target speed',
+    'indicators.current_speed':'Current speed',
   },
 };
 ```
@@ -586,7 +651,76 @@ When the trim guide is on, render a dashed boom line at the optimal angle alongs
 
 ---
 
-## 12. Audio
+## 12. Visual Indicators Panel
+
+A button in the HUD (vector/eye icon, label from `t('indicators.button_label')`) opens a **floating panel** overlaid on the game world. The panel does not pause the game — it stays open while sailing. Clicking the button again (or tapping the X) closes it.
+
+### Panel UI
+
+```
+┌─────────────────────────────────┐
+│  Indicadores Visuales        ✕  │
+├─────────────────────────────────┤
+│  🔵  Vector de viento      [ON] │
+│  ⬜  Dirección de crujía  [OFF] │
+│  🟢  Vector de velocidad  [OFF] │
+│  🟡  Inercia del barco    [OFF] │
+└─────────────────────────────────┘
+```
+
+- Each row: colored icon matching the indicator's color, label (from `t()`), toggle switch.
+- Panel position: fixed to a corner of the screen (does not scroll with the world). Suggested default: top-right, below the wind HUD element.
+- Panel background: semi-transparent dark, rounded corners, same visual language as the controller widgets.
+
+### Indicators
+
+#### 1. Wind Vector (`indicators.wind_vector`) — default ON
+
+- **What it shows**: where the wind is coming FROM, and how strong it is.
+- **Visual**: arrow drawn from the boat center. Direction points into the wind source. Length scales with wind speed: `length = windSpeed * 8px` (capped at 120px). Arrowhead at the tip. Speed label beside the tip (e.g. "12 kts").
+- **Color**: sky blue.
+- **Updates**: every frame (rotates with live wind; length changes if speed changes).
+
+#### 2. Heading Vector / Crujía (`indicators.heading`) — default OFF
+
+- **What it shows**: the exact direction the boat's bow (keel line) is pointing.
+- **Visual**: line from the hull center forward along the heading angle. Fixed length ~80px. Arrowhead at the bow end.
+- **Color**: bright white / cyan.
+- **Educational value**: when leeway is present, this line diverges from the velocity vector — the player can see the boat is slipping sideways relative to where the bow points.
+
+#### 3. Velocity Vector (`indicators.velocity`) — default OFF
+
+- **What it shows**: the boat's actual direction and speed of movement over water (heading + leeway drift combined).
+- **Visual**: arrow from the hull center. Direction = actual movement direction. Length proportional to boat speed: `length = boatSpeed * 10px` (capped at 100px). Arrowhead at tip. Speed value label beside tip (e.g. "5.2 kts").
+- **Color**: bright green.
+- **Educational value**: when both heading and velocity vectors are enabled simultaneously, the player can clearly see the **leeway angle** — the gap between the two arrows caused by the boat being pushed sideways by wind and water resistance.
+
+#### 4. Inertia / Displacement Indicator (`indicators.inertia`) — default OFF
+
+- **What it shows**: how the boat's weight (displacement) is affecting its response to changes — the gap between where the boat IS in speed and where it is TRYING to get to.
+- **Visual**: a small floating panel anchored near the boat (world space, moves with boat):
+  ```
+  ┌──────────────────────┐
+  │  Desplazamiento: 2 t │  ← configured displacement + class name
+  │  Obj  ╌╌╌╌╌╌╌╌╌╌╌╌╌ │  ← target speed (dashed bar, white)
+  │  Act  ████████░░░░░  │  ← current speed (solid bar, green)
+  └──────────────────────┘
+  ```
+  - **Top line**: displacement value and class (`t('indicators.disp_medium')`, "2.0 t").
+  - **"Obj" bar** (target speed): dashed, white — where the boat speed is heading given current trim and conditions.
+  - **"Act" bar** (actual speed): solid green — current speed right now.
+  - The gap between the two bars is the visual representation of inertia. Right after a tack, the gap is large and closes slowly — for a heavy boat, this is very visible.
+  - Bar width: 80px total, each unit = maxSpeed/80 px.
+- **Color**: panel dark translucent; "Obj" bar white dashed; "Act" bar green.
+- **Updates**: every frame.
+
+### Indicator state persistence
+
+The on/off state of each indicator is saved to persistent storage under key `sailsim_indicators` as `{ windVector: bool, heading: bool, velocity: bool, inertia: bool }`. Restored on load.
+
+---
+
+## 13. Audio
 
 All sounds should be synthesized procedurally or embedded inline — no external audio files.
 
@@ -740,6 +874,15 @@ Camera setup: `gameScene.cameras.main.startFollow(boatSprite, true, 0.1, 0.1)` (
 - [ ] Controller positions persist to storage and are restored on reload.
 - [ ] Docking on Map 4 detects success correctly (speed + heading tolerance).
 - [ ] No-go zone arc and sail trim guide toggle correctly.
+- [ ] Visual Indicators button opens and closes the floating panel without pausing the game.
+- [ ] Wind vector arrow rotates with live wind direction and scales correctly with wind speed.
+- [ ] Heading vector (crujía) points along the bow heading and diverges from the velocity vector when leeway is present.
+- [ ] Velocity vector length is proportional to boat speed and points in the actual movement direction.
+- [ ] When both heading and velocity vectors are active simultaneously, the leeway angle gap is clearly visible.
+- [ ] Inertia indicator shows target speed bar and current speed bar; the gap is visually large after a tack and closes gradually.
+- [ ] Inertia gap closes noticeably faster with Light displacement than with Heavy displacement.
+- [ ] Indicator on/off states persist to storage and are restored on reload.
+- [ ] Boat displacement setting in World Configuration changes how quickly the boat accelerates/decelerates.
 - [ ] All user-visible strings come from `TRANSLATIONS` via `t()` — no hardcoded text anywhere.
 - [ ] The game launches in Spanish by default.
 - [ ] Switching to English refreshes all on-screen text immediately.
