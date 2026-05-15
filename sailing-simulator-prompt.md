@@ -47,6 +47,9 @@ There is no score or time pressure by default. It is a sandbox learning tool wit
 | Sail trim status | On the Mainsheet Controller widget | Text label integrated into the rope controller (see Section 3) |
 | Rudder angle | On the Helm Controller widget | Shown on the mini-boat silhouette beside the helm wheel (see Section 3) |
 | Objective | Bottom-left | Current map objective text (resolved via i18n key) |
+| Notification panel | Top-center | Contextual tips and coaching messages; toggleable; see Section 14 |
+| Off-screen objective arrow | Screen edge | Small arrow on the nearest screen edge pointing toward the next buoy when it is outside the viewport; disappears when the buoy is visible |
+| Mini-map | Configurable corner | Small world overview showing boat, buoys, islands; toggleable from the Indicators Panel |
 
 All HUD strings come from the `TRANSLATIONS` object via `t()` — see Section 10.
 
@@ -82,6 +85,17 @@ The mainsheet controller is a **rope widget** that visually represents the tensi
 | No-go zone | `trim.luffing` | FLAMEA | LUFFING |
 
 Widget dimensions: taut state ≈ 100px tall × 6px wide. Eased state ≈ 30px tall × 18px wide.
+
+### Haptic feedback (mobile)
+
+On supported devices, trigger `navigator.vibrate()` for physical events. This API is a no-op on desktop — safe to call unconditionally.
+
+| Event | Pattern |
+|---|---|
+| Tack or jibe | `vibrate(40)` — short tap |
+| Island collision | `vibrate([80, 40, 80])` — double thud |
+| Buoy rounded | `vibrate(25)` — brief confirm |
+| Objective complete | `vibrate([30, 20, 30, 20, 60])` — celebratory pattern |
 
 ### Multi-touch (mobile)
 
@@ -331,6 +345,7 @@ A settings panel accessible from the main menu and from the in-game pause menu.
 | Show sail trim guide | Toggle | On / Off | On |
 | Show no-go zone arc | Toggle | On / Off | On |
 | Show wind arrows on water | Toggle | On / Off | On |
+| Show notifications | Toggle | On / Off | On |
 | Language | Button group | `ES` / `EN` | `ES` (Spanish) |
 | Map | Button group | All map IDs | Map 1 |
 
@@ -372,10 +387,16 @@ GameScene
 
 PauseScene (overlay on GameScene — world stays rendered behind)
   ├── Resume  [t('pause.resume')]
-  ├── Restart [t('pause.restart')]  ← resets boat to startPosition/startHeading, clears wake,
-  │                                    resets ObjectiveTracker; does NOT exit to menu
+  ├── Restart [t('pause.restart')]  → ConfirmDialog [t('confirm.restart_msg')]
+  │                                    Yes → reset + resume | No → back to PauseScene
   ├── Settings panel
-  └── Back to Menu  [t('pause.menu')]
+  └── Back to Menu  [t('pause.menu')]  → ConfirmDialog [t('confirm.exit_msg')]
+                                          Yes → MainMenu | No → back to PauseScene
+
+ConfirmDialog (lightweight modal over PauseScene)
+  ├── Message text  [dynamic i18n key]
+  ├── Confirm  [t('confirm.yes')]
+  └── Cancel   [t('confirm.no')]
 ```
 
 State transitions do not lose world state (map, boat position, wind) unless the player explicitly returns to the menu.
@@ -434,6 +455,11 @@ Every asset's visual properties are engine-agnostic; the drawing technique belon
 | **Wind shift cue** | The wind direction arrow in the HUD briefly scales up to 1.3× and pulses once when the wind direction changes by more than 5° (only when wind variability is ON). | Arrow: same sky blue as normal, brief bright flash. | Single pulse animation, ~0.4 s duration. Does not repeat until the next shift event. |
 | **Tutorial coach mark** | Full-screen dim overlay (alpha 0.6) with a "cut-out" hole revealing the highlighted element. Rounded tooltip box with text and a "Continue" / "Skip" button. | Overlay: dark, alpha 0.6. Tooltip: dark background, white text, rounded corners. Cutout: transparent circle or rounded rect matching the highlighted element. | Input blocked on everything except the Continue/Skip buttons. |
 | **Point-of-sail label** | Short text rendered near the boat in world space, just above the no-go zone arc. Shows current point of sail name. Color-coded by category. | Close-hauled: blue. Reach: green. Running: orange. In irons: red. | Toggleable learning aid. Updates continuously as AWA changes. |
+| **Sail trim glow — good** | A warm golden halo around the sail, triggered when trim status transitions into `trimmed`. Fades in over 0.2 s and out over 0.8 s (one-shot, not looping). | Warm gold / amber, alpha peaks at 0.5. Applied as additive blend or outer glow on the sail shape. | Fires once per transition into trimmed state. Reinforces correct trimming as a positive reward. |
+| **Sail trim glow — luffing** | A cool blue-white shimmer on the sail while `trimStatus === 'luffing'`. Implemented as a rapid opacity oscillation (5–8 Hz) on a blue-tinted overlay of the sail shape. | Icy blue-white, alpha oscillates 0.0–0.35. | Active continuously while luffing; stops immediately when AWA > 40°. Reinforces the negative state without being distracting. |
+| **Off-screen objective arrow** | A small filled triangle (arrow) ~18px, positioned on the screen edge in the direction of the next buoy. Shown only when the buoy is outside the visible viewport. Rotates to always point at the buoy. | Orange, matching buoy color. Alpha 0.85. | Updates every frame. Disappears when the buoy enters the viewport. Shows distance label in small text beside it (e.g. "340 m"). |
+| **Mini-map** | Small ~120×120px overlay in a configurable corner. Shows: world boundary as a thin rectangle, islands as dark filled polygons (scaled), all buoys as 4px dots (grey = done, orange = pending, bright = next), boat as a 5px bright dot with a tiny heading arrow, start zone as a short line. No dock or text labels. Background: dark semi-transparent rounded rect. | Islands: dark grey. Buoys: grey/orange. Boat: bright white. Start zone: dashed white line. | Updates every frame. Corner is configurable (same 3×2 grid as controllers). Toggleable from Indicators Panel. |
+| **Notification panel** | Pill-shaped banner, ~280px wide × ~40px tall, at top-center of screen. Left border color indicates priority. Text centered. Fades in (0.3 s), stays, fades out (0.3 s). Max 1 visible at a time; queue of up to 3. | Urgent: red border. Warning: yellow. Success: green. Info: blue-grey. Background: dark semi-transparent. | Togglable from Settings. See Notification & Coaching System section for full message catalog. |
 
 ### Wind-reactive water — parameter tiers
 
@@ -525,6 +551,17 @@ Game
 ├── TutorialManager        First-run coach mark sequence
 │     start()   next()   skip()   isComplete() → bool
 │
+├── NotificationSystem     Contextual coaching messages and idle tips
+│     push(key, priority, duration)   queues a message
+│     update(boatState, gameState)    checks triggers each frame, pushes when conditions met
+│     render()                        draws the current notification pill
+│     isEnabled: bool                 from settings toggle
+│
+├── MiniMap                Small world overview overlay
+│     render(boatState, map, camera)  redraws each frame when visible
+│     isEnabled: bool                 from IndicatorsPanel toggle
+│     cornerPosition: string          from LayoutManager
+│
 ├── IndicatorsPanel        Floating toggle window; renders physics vectors onto the world
 │     open()  close()  toggle()
 │     indicators: {
@@ -544,7 +581,9 @@ Game
 
 Data flows in one direction per frame:
 ```
-InputManager → SailingPhysics.update() → boatState → render + HUD + ObjectiveTracker + IndicatorsPanel
+InputManager → SailingPhysics.update() → boatState → render + HUD + ObjectiveTracker
+                                                     → IndicatorsPanel + MiniMap
+                                                     → NotificationSystem.update()
 ```
 
 ---
@@ -649,6 +688,37 @@ const TRANSLATIONS = {
     // Layout customize mode
     'layout.mode_banner':      'Arrastrá los controles a donde te quede más cómodo',
     'layout.done':             'Listo',
+
+    // Confirm dialogs
+    'confirm.yes':             'Sí',
+    'confirm.no':              'Cancelar',
+    'confirm.restart_msg':     '¿Reiniciar desde el principio?',
+    'confirm.exit_msg':        '¿Salir al menú? Se perderá el progreso.',
+
+    // Notifications — contextual
+    'notif.trim_close':        'Casi en punto — ajustá un poco más',
+    'notif.trim_perfect':      '¡Vela en punto!',
+    'notif.luffing_tip':       'La vela flamea — girá para salir de la zona muerta',
+    'notif.irons_tip':         'En hierros: filá la escota y da el timón a un lado',
+    'notif.tack_success':      'Tacada',
+    'notif.jibe_success':      'Virada por popa',
+    'notif.approach_dock':     'Reducí velocidad para atracar',
+    'notif.running_warn':      'Cuidado — riesgo de virada involuntaria',
+
+    // Notifications — idle tips (rotated when nothing else fires)
+    'tip.indicators':          '¿Sabías? Activá Indicadores para ver los vectores físicos del barco',
+    'tip.displacement':        '¿Sabías? Cambiá el desplazamiento en Configuración para practicar con distintas inercias',
+    'tip.wind_dir':            '¿Sabías? Podés cambiar la dirección del viento para practicar distintas ceñidas',
+    'tip.maps':                '¿Sabías? Hay 4 mapas — probá el Muelle para practicar atraco',
+    'tip.trim_guide':          '¿Sabías? Activá la Guía de Escota para ver la posición ideal de la botabara',
+    'tip.tutorial_replay':     '¿Sabías? Podés repetir el tutorial desde Configuración',
+    'tip.minimap':             '¿Sabías? Activá el minimapa en Indicadores para ver el recorrido completo',
+
+    // Mini-map
+    'indicators.minimap':      'Minimapa',
+
+    // Notifications settings
+    'settings.notifications':  'Mostrar notificaciones',
 
     // Stuck in irons
     'irons.label':             'EN HIERROS',
@@ -761,6 +831,37 @@ const TRANSLATIONS = {
     'layout.mode_banner':      'Drag the controllers to wherever feels comfortable',
     'layout.done':             'Done',
 
+    // Confirm dialogs
+    'confirm.yes':             'Yes',
+    'confirm.no':              'Cancel',
+    'confirm.restart_msg':     'Restart from the beginning?',
+    'confirm.exit_msg':        'Exit to menu? Current progress will be lost.',
+
+    // Notifications — contextual
+    'notif.trim_close':        'Almost there — trim a little more',
+    'notif.trim_perfect':      'Perfect trim!',
+    'notif.luffing_tip':       'Sail is luffing — turn away from the wind',
+    'notif.irons_tip':         'In irons: ease sail and apply helm to one side',
+    'notif.tack_success':      'Tacked',
+    'notif.jibe_success':      'Jibed',
+    'notif.approach_dock':     'Reduce speed to dock',
+    'notif.running_warn':      'Caution — accidental jibe risk',
+
+    // Notifications — idle tips
+    'tip.indicators':          'Did you know? Enable Indicators to see the boat\'s physics vectors',
+    'tip.displacement':        'Did you know? Change displacement in Settings to practice with different inertia',
+    'tip.wind_dir':            'Did you know? You can change wind direction to practice different tacks',
+    'tip.maps':                'Did you know? There are 4 maps — try the Marina map to practice docking',
+    'tip.trim_guide':          'Did you know? Enable Trim Guide to see the ideal boom position',
+    'tip.tutorial_replay':     'Did you know? You can replay the tutorial from Settings',
+    'tip.minimap':             'Did you know? Enable the mini-map in Indicators to see the full course',
+
+    // Mini-map
+    'indicators.minimap':      'Mini-map',
+
+    // Notifications settings
+    'settings.notifications':  'Show notifications',
+
     // Stuck in irons
     'irons.label':             'IN IRONS',
 
@@ -848,6 +949,7 @@ A button in the HUD (vector/eye icon, label from `t('indicators.button_label')`)
 │  ⬜  Dirección de crujía  [OFF] │
 │  🟢  Vector de velocidad  [OFF] │
 │  🟡  Inercia del barco    [OFF] │
+│  🗺  Minimapa             [OFF] │
 └─────────────────────────────────┘
 ```
 
@@ -897,13 +999,78 @@ A button in the HUD (vector/eye icon, label from `t('indicators.button_label')`)
 - **Color**: panel dark translucent; "Obj" bar white dashed; "Act" bar green.
 - **Updates**: every frame.
 
+#### 5. Mini-map (`indicators.minimap`) — default OFF
+
+- **What it shows**: a scaled-down top view of the entire world — boat position, heading, buoys, and island outlines — so the player can orient themselves without scrolling.
+- **Visual**: 120×120px overlay in a configurable corner. Dark semi-transparent background. Islands as dark filled polygons. Buoys as 4px dots (grey = already rounded, orange = pending, bright orange = next target). Boat as a 5px white dot with a tiny 8px heading arrow. Start zone as a short dashed white line.
+- **Scale**: `worldSize → 120px` (e.g., 3000px world = 1:25 scale). Scale factor computed on map load.
+- **Corner position**: configurable via the same 3×2 grid in Controller Layout settings. Default: top-left. Stored in `sailsim_layout` alongside controller positions.
+- **Updates**: redrawn every frame (fast — only a few dozen primitives at 1:25 scale).
+
 ### Indicator state persistence
 
-The on/off state of each indicator is saved to persistent storage under key `sailsim_indicators` as `{ windVector: bool, heading: bool, velocity: bool, inertia: bool }`. Restored on load.
+The on/off state of each indicator is saved to persistent storage under key `sailsim_indicators` as `{ windVector: bool, heading: bool, velocity: bool, inertia: bool, minimap: bool }`. Restored on load.
 
 ---
 
-## 13. Audio
+## 13. Notification & Coaching System
+
+A reserved screen area (top-center by default) that displays contextual coaching messages and, when nothing is happening, idle tips about simulator features. Toggleable from Settings (`settings.notifications`). Default: ON.
+
+### Visual design
+
+A pill-shaped banner (~280px wide × 40px tall). Left-border color indicates priority. Text is centered. Transition: fade in 0.3 s → hold → fade out 0.3 s. Maximum 1 notification visible at a time. A queue of up to 3 messages processes in order; lower-priority messages are dropped if the queue is full. No notification blocks game input.
+
+| Priority | Border color | Example use |
+|---|---|---|
+| `urgent` | Red | Stuck in irons for 3 s |
+| `warning` | Yellow | Approaching dock too fast |
+| `success` | Green | Perfect trim, tack confirmed |
+| `info` | Blue-grey | Idle feature tips |
+
+### Contextual messages (game-state triggers)
+
+These fire in response to specific game events. Each key has a cooldown to avoid repetition.
+
+| Key | Trigger condition | Priority | Duration | Cooldown |
+|---|---|---|---|---|
+| `notif.trim_close` | `trimError < 10°` and not yet `trimmed`, sustained 2 s | `info` | 3 s | 15 s |
+| `notif.trim_perfect` | Transition into `trimmed` status | `success` | 2 s | 10 s |
+| `notif.luffing_tip` | AWA < 40° for first time in session | `info` | 4 s | 60 s |
+| `notif.irons_tip` | `isInIrons` for > 3 s | `urgent` | 5 s | 20 s |
+| `notif.tack_success` | `justTacked` event | `success` | 1.5 s | 5 s |
+| `notif.jibe_success` | `justJibed` event | `success` | 1.5 s | 5 s |
+| `notif.approach_dock` | Map 4 only: boat within 200px of dock and `boatSpeed > 2 kts` | `warning` | 4 s | 8 s |
+| `notif.running_warn` | AWA > 160° and `windSpeed > 15 kts` | `warning` | 4 s | 30 s |
+
+### Idle tips (no specific trigger)
+
+When no contextual message has fired in the last 30 seconds, cycle through the idle tips pool in order. Each idle tip shows for 6 seconds. The pool is:
+
+```
+tip.indicators, tip.displacement, tip.wind_dir, tip.maps,
+tip.trim_guide, tip.tutorial_replay, tip.minimap
+```
+
+Once all tips have been shown, the cycle repeats. Tips are `info` priority and are dropped if a contextual message fires while one is showing.
+
+### NotificationSystem logic
+
+```js
+// Called every frame
+NotificationSystem.update(boatState, gameState) {
+  if (!isEnabled) return;
+  checkContextualTriggers(boatState, gameState);  // push if conditions met + cooldown ok
+  if (timeSinceLastMessage > 30s) pushNextIdleTip();
+  renderCurrentNotification(delta);               // handle fade in/out, queue advancement
+}
+```
+
+Notification state (current message, queue, tip index, cooldowns) is not persisted — it resets each session.
+
+---
+
+## 14. Audio
 
 All sounds should be synthesized procedurally or embedded inline — no external audio files.
 
@@ -911,6 +1078,7 @@ All sounds should be synthesized procedurally or embedded inline — no external
 |---|---|---|
 | Water ambience | Always | Low looping ocean background |
 | Sail luff | AWA < 40° | Flapping fabric sound, intensity proportional to speed |
+| Sail fill | On transition `luffing/stalled → trimmed` | Soft "whomp" of canvas filling with wind — one-shot, not looping |
 | Tack / jibe | On `justTacked` or `justJibed` event | Short whoosh |
 | Buoy rounded | On `buoyRounded` event | Short bright ping |
 | Island collision | On grounding | Dull thud |
@@ -1128,6 +1296,18 @@ Camera setup: `gameScene.cameras.main.startFollow(boatSprite, true, 0.1, 0.1)` (
 - [ ] Wind shift cue pulses the HUD wind arrow when wind variability causes a shift > 5°.
 - [ ] In landscape orientation, controllers default to bottom corners. In portrait, they default to center-sides.
 - [ ] On screens narrower than 400px, the Indicators Panel is scrollable and controllers scale to 80%.
+- [ ] Haptic feedback fires on tack, jibe, collision, buoy rounding, and objective complete with correct patterns.
+- [ ] Restart and Back to Menu both show a confirm dialog before executing. Cancelling returns to the pause menu.
+- [ ] Sail trim glow (gold) appears on transition into trimmed state and fades out in ~0.8 s.
+- [ ] Sail luffing shimmer (blue-white) oscillates continuously while AWA < 40° and stops immediately when AWA > 40°.
+- [ ] Off-screen objective arrow appears on the screen edge when the next buoy is outside the viewport; disappears when it enters.
+- [ ] Mini-map toggle in Indicators Panel shows/hides the mini-map overlay. Boat, buoys, and islands are correctly scaled.
+- [ ] Mini-map buoy dots reflect rounding state (grey = done, orange = pending, bright = next).
+- [ ] Notification panel shows contextual messages with correct priority colors and durations.
+- [ ] Contextual triggers fire at the right conditions (trim_close, irons_tip, approach_dock, etc.) and respect cooldowns.
+- [ ] When no contextual message fires for 30 s, idle tips cycle through the full pool.
+- [ ] Notifications can be toggled off from Settings; no messages appear when disabled.
+- [ ] Sail fill sound plays once on transition from luffing/stalled to trimmed.
 - [ ] Indicator on/off states persist to storage and are restored on reload.
 - [ ] Boat displacement setting in World Configuration changes how quickly the boat accelerates/decelerates.
 - [ ] All user-visible strings come from `TRANSLATIONS` via `t()` — no hardcoded text anywhere.
