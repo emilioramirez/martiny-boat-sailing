@@ -163,21 +163,21 @@ Maps are pure data objects in a `MAPS` array. The `GameScene` reads the selected
 ```js
 {
   id: "string",
-  name: "Display Name",
-  worldSize: { width: 3000, height: 3000 },   // canvas pixels
+  nameKey: "map.buoy1.name",           // i18n key — resolved via t()
+  worldSize: { width: 3000, height: 3000 },
   startPosition: { x: 0, y: 0 },
-  startHeading: 0,                              // degrees, 0 = North
-  wind: { direction: 180, speed: 12 },         // default wind for this map
+  startHeading: 0,                      // degrees, 0 = North
+  wind: { direction: 180, speed: 12 },
   islands: [
-    { points: [[x,y], [x,y], ...], color: 0x6B8E23 }  // polygon
+    { points: [[x,y], [x,y], ...], color: 0x6B8E23 }
   ],
   docks: [
-    { x, y, width, height, heading, label: "Marina" }
+    { x, y, width, height, heading, labelKey: "map.dock.label" }  // i18n key
   ],
   buoys: [
     { id: 1, x: 0, y: 0, color: 0xFF6600 }
   ],
-  objective: "Round all buoys in order and return to start."
+  objectiveKey: "map.buoy1.objective"  // i18n key — resolved via t()
 }
 ```
 
@@ -222,6 +222,7 @@ Accessible from the main menu and from the in-game pause menu (gear icon).
 | Show sail trim guide | Toggle | On / Off | On |
 | Show no-go zone arc | Toggle | On / Off | On |
 | Show wind arrows on water | Toggle | On / Off | On |
+| Language | Button group | `ES` / `EN` | `ES` (Spanish) |
 | Map | Button group | All map IDs | Map 1 |
 
 When **wind variability** is on, wind direction oscillates ±10° over ~20 second cycles using a sine wave with slight random noise — simulating real wind shifts without being chaotic.
@@ -318,6 +319,9 @@ index.html
 └── <script>   (game code, organized top-to-bottom)
     │
     ├── CONSTANTS          Object with all tuning values (no magic numbers elsewhere)
+    ├── TRANSLATIONS       i18n strings object, all user-visible text (see Section 12)
+    │     t(key) → string   global helper, falls back en → key
+    │     setLanguage(code) saves to localStorage, triggers UI refresh
     ├── MAPS               Array of map data objects (see Section 5)
     ├── SailingPhysics     Class — pure math, no Phaser dependency
     │     methods: update(state, input, delta) → newState
@@ -392,7 +396,192 @@ index.html
 
 ---
 
-## 12. Learning Aids (Toggleable)
+## 12. Internationalization (i18n)
+
+All text visible to the player must come from the centralized `TRANSLATIONS` object. No string is ever hardcoded in widget draw functions, scene `create()`, or `update()` — always call `t(key)`.
+
+### Language setup
+
+- Default language: **Spanish** (`'es'`).
+- Bundled languages: Spanish (`'es'`) and English (`'en'`).
+- Selected language saved to `localStorage` under key `sailsim_lang` and restored on load.
+- Switching language applies immediately — all active `Phaser.GameObjects.Text` objects call `.setText(t(key))` without a scene restart.
+
+### t() function
+
+```js
+let currentLang = localStorage.getItem('sailsim_lang') || 'es';
+
+function t(key) {
+  return TRANSLATIONS[currentLang]?.[key] ?? TRANSLATIONS['en'][key] ?? key;
+}
+
+function setLanguage(lang) {
+  currentLang = lang;
+  localStorage.setItem('sailsim_lang', lang);
+  EventBus.emit('lang-changed');   // all scenes listen and refresh their text objects
+}
+```
+
+Fallback chain: current language → English → raw key. Missing translations never crash the game.
+
+### TRANSLATIONS object — required keys
+
+```js
+const TRANSLATIONS = {
+  es: {
+    // HUD
+    'hud.speed':               'Velocidad',
+    'hud.heading':             'Rumbo',
+    'hud.wind_speed':          'Viento',
+    'hud.wind_from':           'De',
+
+    // Mainsheet controller states
+    'trim.eased':              'FILADA',
+    'trim.easing':             'FILANDO…',
+    'trim.trimmed':            'CAZADA',
+    'trim.stalled':            'PARADA',
+    'trim.luffing':            'FLAMEA',
+
+    // Helm controller
+    'helm.port':               'BABOR',
+    'helm.starboard':          'ESTRIBOR',
+
+    // Map names
+    'map.buoy1.name':          'Una Boya',
+    'map.buoy2.name':          'Dos Boyas',
+    'map.triangle.name':       'Triángulo Olímpico',
+    'map.dock.name':           'Muelle',
+    'map.dock.label':          'Marina',
+
+    // Map objectives
+    'map.buoy1.objective':     'Rodea la boya #1 y regresa al punto de partida.',
+    'map.buoy2.objective':     'Navega entre las boyas #1 y #2 alternando ceñida y empopada.',
+    'map.triangle.objective':  'Recorrido olímpico: boya #1 → #2 → #3 → largada.',
+    'map.dock.objective':      'Atraca en el muelle con velocidad menor a 1 nudo.',
+
+    // Main menu
+    'menu.title':              'Simulador de Vela',
+    'menu.start':              'Salir a Navegar',
+    'menu.settings':           'Configuración',
+    'menu.select_map':         'Elige un mapa',
+
+    // Settings panel
+    'settings.title':          'Configuración',
+    'settings.wind_dir':       'Dirección del viento',
+    'settings.wind_speed':     'Velocidad del viento',
+    'settings.wind_var':       'Variabilidad del viento',
+    'settings.trim_guide':     'Mostrar guía de escota',
+    'settings.no_go_arc':      'Mostrar zona muerta',
+    'settings.wind_arrows':    'Flechas de viento en el agua',
+    'settings.language':       'Idioma',
+    'settings.layout':         'Disposición de controles',
+    'settings.customize':      'Personalizar disposición',
+    'settings.opacity':        'Opacidad de controles',
+
+    // Pause
+    'pause.title':             'Pausa',
+    'pause.resume':            'Continuar',
+    'pause.menu':              'Volver al menú',
+
+    // Objective completion
+    'complete.title':          '¡Completado!',
+    'complete.back':           'Volver al menú',
+
+    // Learning aids
+    'aid.no_go':               'Zona muerta',
+    'aid.trim_guide':          'Guía de escota',
+    'aid.awa_label':           'AV Aparente',
+
+    // Layout customize mode
+    'layout.mode_banner':      'Arrastrá los controles a donde más te cómodo',
+    'layout.done':             'Listo',
+  },
+
+  en: {
+    // HUD
+    'hud.speed':               'Speed',
+    'hud.heading':             'Heading',
+    'hud.wind_speed':          'Wind',
+    'hud.wind_from':           'From',
+
+    // Mainsheet controller states
+    'trim.eased':              'EASED',
+    'trim.easing':             'EASING…',
+    'trim.trimmed':            'TRIMMED',
+    'trim.stalled':            'STALLED',
+    'trim.luffing':            'LUFFING',
+
+    // Helm controller
+    'helm.port':               'PORT',
+    'helm.starboard':          'STBD',
+
+    // Map names
+    'map.buoy1.name':          'Single Buoy',
+    'map.buoy2.name':          'Two Buoys',
+    'map.triangle.name':       'Olympic Triangle',
+    'map.dock.name':           'Island Marina',
+    'map.dock.label':          'Marina',
+
+    // Map objectives
+    'map.buoy1.objective':     'Round buoy #1 and return to the start.',
+    'map.buoy2.objective':     'Sail between buoys #1 and #2, alternating upwind and downwind legs.',
+    'map.triangle.objective':  'Olympic course: buoy #1 → #2 → #3 → start.',
+    'map.dock.objective':      'Dock at the marina at less than 1 knot.',
+
+    // Main menu
+    'menu.title':              'Sailing Simulator',
+    'menu.start':              'Start Sailing',
+    'menu.settings':           'Settings',
+    'menu.select_map':         'Select a map',
+
+    // Settings panel
+    'settings.title':          'Settings',
+    'settings.wind_dir':       'Wind direction',
+    'settings.wind_speed':     'Wind speed',
+    'settings.wind_var':       'Wind variability',
+    'settings.trim_guide':     'Show trim guide',
+    'settings.no_go_arc':      'Show no-go zone',
+    'settings.wind_arrows':    'Wind arrows on water',
+    'settings.language':       'Language',
+    'settings.layout':         'Controller layout',
+    'settings.customize':      'Customize layout',
+    'settings.opacity':        'Controller opacity',
+
+    // Pause
+    'pause.title':             'Paused',
+    'pause.resume':            'Resume',
+    'pause.menu':              'Back to Menu',
+
+    // Objective completion
+    'complete.title':          'Completed!',
+    'complete.back':           'Back to Menu',
+
+    // Learning aids
+    'aid.no_go':               'No-go zone',
+    'aid.trim_guide':          'Trim guide',
+    'aid.awa_label':           'App. Wind',
+
+    // Layout customize mode
+    'layout.mode_banner':      'Drag the controllers to wherever feels comfortable',
+    'layout.done':             'Done',
+  },
+};
+```
+
+### Adding a new language
+
+Add a new top-level key (e.g. `'pt'`) to `TRANSLATIONS` with all the same keys. Add that code to the Language selector button group in Settings. No other code changes are needed.
+
+### Rules
+
+- Every string visible to the player MUST have an entry in both `'es'` and `'en'` blocks.
+- Map `nameKey` and `objectiveKey` fields are i18n keys, resolved at render time via `t()` — never raw strings.
+- The `TRANSLATIONS` object is defined before any scene code so `t()` is available globally from the first frame.
+
+---
+
+## 13. Learning Aids (Toggleable)
 
 These are visual overlays to help beginners understand what's happening. All togglable via Settings.
 
@@ -407,7 +596,7 @@ When `showSailTrimGuide` is true, render a dashed boom line at the optimal trim 
 
 ---
 
-## 13. Audio (Optional Enhancement)
+## 14. Audio (Optional Enhancement)
 
 If audio is implemented, use the Web Audio API directly (no external library needed).
 
@@ -422,7 +611,7 @@ All sounds synthesized procedurally via `AudioContext.createOscillator()` or loa
 
 ---
 
-## 14. Completion Criteria
+## 15. Completion Criteria
 
 The game is considered complete when:
 
@@ -439,3 +628,8 @@ The game is considered complete when:
 - [ ] The settings panel changes wind and toggles learning aids.
 - [ ] The game runs smoothly on a modern mobile browser (60fps target).
 - [ ] Everything is contained in a single `index.html` file.
+- [ ] All user-visible strings come from `TRANSLATIONS` via `t()` — no hardcoded text in scene or widget code.
+- [ ] The game launches in Spanish by default.
+- [ ] Switching to English from Settings updates all on-screen text immediately without a scene restart.
+- [ ] Selected language persists in `localStorage` across page reloads.
+- [ ] Both `'es'` and `'en'` blocks in `TRANSLATIONS` are complete (no missing keys).
