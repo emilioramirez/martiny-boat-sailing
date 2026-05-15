@@ -83,6 +83,10 @@ The mainsheet controller is a **rope widget** that visually represents the tensi
 
 Widget dimensions: taut state ≈ 100px tall × 6px wide. Eased state ≈ 30px tall × 18px wide.
 
+### Multi-touch (mobile)
+
+Both controllers must be simultaneously operable. Each controller claims its own pointer ID the moment a touch begins on it. `InputManager` tracks up to 2 active pointer IDs independently — one per controller. A touch on the mainsheet does not interfere with a touch on the helm, and vice versa. Prevent default browser gestures (pinch-zoom, scroll) on the canvas element to avoid conflicts.
+
 ### Helm Controller (rudder / steering)
 
 The helm controller is a **mini helm wheel** that the user rotates to steer, rendered next to a **miniature top-down boat silhouette** so the player can always see the rudder effect.
@@ -165,6 +169,37 @@ When AWA crosses 0° (bow passes through the wind), the boom automatically swing
 
 When AWA crosses 180° (stern passes through the wind), the boom swings to the other side abruptly. Apply a 20% speed penalty for 0.5 seconds.
 
+### Stuck in irons
+
+Stuck in irons occurs when the boat enters the no-go zone too slowly to complete a tack and sits bow-to-wind, barely moving, with near-useless steering. One of the most important situations a beginner must learn to avoid and escape.
+
+**Entry condition**: AWA < 30° AND boatSpeed < 1.0 kts, persisting for > 2 seconds continuously.
+
+**Effects while in irons**:
+- Rudder effectiveness drops to 20% of normal (no water flow over rudder = poor steering).
+- Boom hangs slack at centreline. Sail luffs fully.
+- Boat continues to decelerate passively under drag.
+
+**Escape**: ease the mainsheet fully and apply maximum rudder to one side — this backs the sail and pushes the bow off the wind. Once AWA > 40° and boatSpeed > 0.5 kts, normal sailing resumes. A 3-second cooldown prevents immediately re-entering irons.
+
+**Physics output**: `SailingPhysics` returns `isInIrons: boolean` using the 2-second persistence condition (not just instantaneous AWA < 30°).
+
+**Visual**: label `t('irons.label')` appears near the boat in red. The no-go zone arc pulses slowly while in this state.
+
+### Island and boundary collision
+
+**Island collision**:
+- Each frame, check `boatPosition` against all island polygons.
+- On intersection: find nearest point on the island boundary. Push the boat to just outside that point (offset by half hull width). Apply `boatSpeed *= 0.15`.
+- Only the perpendicular velocity component is cancelled — tangential sliding along the edge is allowed.
+- Visual: boat hull flashes red for 0.3 s on contact.
+
+**World boundary**:
+- Boat position is clamped to the `worldSize` rectangle — it cannot leave the map.
+- Within 150px of any edge: a dark vignette fades in on that screen side as a warning.
+- At the boundary itself: `boatSpeed *= 0.6` per frame until the boat steers away.
+- The camera does not scroll beyond world bounds.
+
 ### Boat displacement
 
 Displacement is the boat's weight (tonnes of water displaced). It controls how quickly the boat responds to changes in sail trim or conditions — a heavier boat accelerates and decelerates more slowly.
@@ -237,9 +272,22 @@ Maps are pure data objects in a `MAPS` array. The game scene reads the selected 
   buoys: [
     { id: 1, x: 0, y: 0, color: '#FF6600' }
   ],
-  objectiveKey: "map.buoy1.objective"  // i18n key — resolved via t()
+  objectiveKey: "map.buoy1.objective", // i18n key — resolved via t()
+  startZone: { x, y, width: 120, height: 40, heading: 0 }
+  // startZone: the finish gate. Two posts (port=red, starboard=green) with a dashed line between.
+  // Objective completes when boatPosition is inside this rectangle after all buoys are rounded.
 }
 ```
+
+### Buoy rounding detection
+
+A buoy is "rounded" when:
+1. The boat comes within `BUOY_DETECTION_RADIUS` (30px) of the buoy centre — entering the detection circle.
+2. The boat then exits the detection circle (distance > 30px again).
+
+Buoys must be rounded **in numeric order** (buoy #1 before #2, etc.). The `ObjectiveTracker` keeps a `nextBuoyIndex` counter that increments on each valid rounding. After all buoys are rounded, the boat must enter the `startZone` to complete the objective.
+
+On rounding: buoy flashes bright yellow for 0.5 s; a short "ping" sound plays; a brief text `t('objective.buoy_rounded')` appears near the buoy and fades out over 1 second.
 
 ### Map 1 — Single Buoy
 
@@ -324,11 +372,27 @@ GameScene
 
 PauseScene (overlay on GameScene — world stays rendered behind)
   ├── Resume  [t('pause.resume')]
+  ├── Restart [t('pause.restart')]  ← resets boat to startPosition/startHeading, clears wake,
+  │                                    resets ObjectiveTracker; does NOT exit to menu
   ├── Settings panel
   └── Back to Menu  [t('pause.menu')]
 ```
 
 State transitions do not lose world state (map, boat position, wind) unless the player explicitly returns to the menu.
+
+### Tutorial (first run)
+
+Shown the first time a player starts any map (checked via `sailsim_tutorial_done` in storage). A sequence of **coach marks**: a dim full-screen overlay with one element highlighted and a tooltip. The game world is visible but input is blocked until the user taps "Continue" / `t('tutorial.next')`.
+
+| Step | Highlighted element | Key | Text |
+|---|---|---|---|
+| 1 | Wind HUD indicator | `tutorial.wind` | Shows where the wind comes from |
+| 2 | Mainsheet Controller rope | `tutorial.mainsheet` | Pull to trim, ease to release |
+| 3 | Helm Controller wheel | `tutorial.helm` | Turn to steer |
+| 4 | No-go zone arc on boat | `tutorial.no_go` | Cannot sail directly into the wind |
+| 5 | Dismiss | `tutorial.start` | Farewell / good luck message |
+
+After step 5: set `sailsim_tutorial_done = true` in storage. A "View tutorial" button (`t('tutorial.replay')`) in Settings replays it at any time. A "Skip" (`t('tutorial.skip')`) option is available from step 1.
 
 ---
 
@@ -356,6 +420,13 @@ All assets use only programmatic drawing — no external image files. Every asse
 | **Velocity vector** | Arrow from hull center in actual movement direction (heading + leeway). Length proportional to boat speed (10px per knot). Arrowhead at tip. | Bright green. | May diverge from heading vector when leeway is present — the gap between the two is educationally significant. Togglable. |
 | **Inertia / Displacement indicator** | Small floating panel near the boat: two stacked horizontal bars — "Target" (dashed, white) and "Current" (solid, green). Bars represent speed. Gap between them shows how much inertia is delaying the response. Text label below: displacement value and class name. | Panel: dark semi-transparent. Bars: green (current) and white dashed (target). Label text: dim white. | Bars update every frame. Gap closes as boat accelerates/decelerates toward target. Togglable. |
 | **Indicators button** | Small square icon button in the HUD corner. Shows a vector/eye icon. | Semi-transparent dark background, white icon. | Opens/closes the IndicatorsPanel floating window. |
+| **Start/finish zone** | Two small cylindrical posts (port = red cylinder, starboard = green cylinder, ~12px diameter × 20px tall) with a dashed white line between them spanning the zone width. | Port post: red. Starboard post: green. Dashed line: white, alpha 0.7. | Static world object. When the boat passes through the line after rounding all buoys, the zone flashes briefly and the completion banner fires. |
+| **Buoy rounding flash** | The buoy's fill colour rapidly transitions to bright yellow and back to orange over 0.5 s (single flash). A brief `t('objective.buoy_rounded')` text fades in at the buoy position and rises slightly over 1 s. | Flash: bright yellow → orange. Text: white, fades to transparent. | Triggered once per rounding event. Does not re-trigger if the boat circles the buoy again. |
+| **Stuck-in-irons overlay** | Text label `t('irons.label')` rendered in bold red above the boat in world space. The no-go zone arc strokes slowly between full opacity and 40% opacity (pulse rate ~1 Hz). | Label: red. Arc pulse: red, 0.4–1.0 alpha. | Appears and pulses while `isInIrons` is true; disappears immediately on escape. |
+| **World edge vignette** | Dark gradient overlay on the screen edge closest to the world boundary. Width: ~100px. | Very dark navy/black, alpha up to 0.4. | Fades in as boat approaches within 150px of world edge; fades out as boat moves away. |
+| **Wind shift cue** | The wind direction arrow in the HUD briefly scales up to 1.3× and pulses once when the wind direction changes by more than 5° (only when wind variability is ON). | Arrow: same sky blue as normal, brief bright flash. | Single pulse animation, ~0.4 s duration. Does not repeat until the next shift event. |
+| **Tutorial coach mark** | Full-screen dim overlay (alpha 0.6) with a "cut-out" hole revealing the highlighted element. Rounded tooltip box with text and a "Continue" / "Skip" button. | Overlay: dark, alpha 0.6. Tooltip: dark background, white text, rounded corners. Cutout: transparent circle or rounded rect matching the highlighted element. | Input blocked on everything except the Continue/Skip buttons. |
+| **Point-of-sail label** | Short text rendered near the boat in world space, just above the no-go zone arc. Shows current point of sail name. Color-coded by category. | Close-hauled: blue. Reach: green. Running: orange. In irons: red. | Toggleable learning aid. Updates continuously as AWA changes. |
 
 ### Wind-reactive water — parameter tiers
 
@@ -382,6 +453,19 @@ The water dash animation has three tiers, selected by current wind speed. Transi
 | 3–8 kts | Clear V, moderate spread, ~15–20 px wide at tail |
 | 8–15 kts | Prominent V, ~30–35 px wide at tail, clearly animated |
 
+### Responsive layout — portrait vs landscape
+
+The game detects orientation on load and on resize, and adjusts controller default positions accordingly. The canvas always fills the viewport.
+
+| Orientation | Mainsheet default | Helm default | HUD |
+|---|---|---|---|
+| **Landscape** (width > height) | Bottom-right corner | Bottom-left corner | Top strip |
+| **Portrait** (height > width) | Center-right, lower third | Center-left, lower third | Top strip |
+
+On **very small portrait screens** (width < 400px): the Indicators Panel is limited to 280px wide and gains vertical scroll if its content overflows. Controller widgets scale down to 80% of their normal size to avoid overlapping the game world.
+
+The layout re-evaluates whenever the window is resized or orientation changes. User-customized positions (from the Layout Manager) override these defaults and are preserved per orientation separately: storage key `sailsim_layout_landscape` and `sailsim_layout_portrait`.
+
 ---
 
 ## 9. Logical Architecture
@@ -404,6 +488,8 @@ Game
 │     rudderAxis           number, -1 (full port) to +1 (full starboard)
 │     sailTrimTarget       number, 0° (trimmed) to 85° (eased)
 │     Reads from: MainsheetController, HelmController, keyboard (optional)
+│     Multi-touch: tracks up to 2 pointer IDs independently, one per controller.
+│     Each controller claims a pointer ID on touch-start; releases it on touch-end.
 │
 ├── MainsheetController    Renders the rope widget; writes to InputManager
 │     draw(trimAngle)
@@ -421,8 +507,16 @@ Game
 ├── WorldBuilder           Reads a map data object and instantiates world objects
 │     build(map) → { islands, buoys, docks, water }
 │
+├── CollisionSystem        Island and world boundary collision each frame
+│     check(boatState, islands, worldSize) → { collision: bool, pushVector, speedMultiplier }
+│
 ├── ObjectiveTracker       Checks completion conditions for the active map
-│     update(boatState, map) → { complete: bool, message: string }
+│     nextBuoyIndex        which buoy must be rounded next
+│     update(boatState, map) → { buoyRounded: bool, complete: bool }
+│     reset()              called by Restart action in PauseScene
+│
+├── TutorialManager        First-run coach mark sequence
+│     start()   next()   skip()   isComplete() → bool
 │
 ├── IndicatorsPanel        Floating toggle window; renders physics vectors onto the world
 │     open()  close()  toggle()
@@ -549,6 +643,34 @@ const TRANSLATIONS = {
     'layout.mode_banner':      'Arrastrá los controles a donde te quede más cómodo',
     'layout.done':             'Listo',
 
+    // Stuck in irons
+    'irons.label':             'EN HIERROS',
+
+    // Points of sail (for label aid)
+    'pos.in_irons':            'En Hierros',
+    'pos.close_hauled':        'Ceñida',
+    'pos.close_reach':         'Descuartelar',
+    'pos.beam_reach':          'Través',
+    'pos.broad_reach':         'Largo',
+    'pos.running':             'Empopada',
+
+    // Pause
+    'pause.restart':           'Reiniciar',
+
+    // Objective / buoy events
+    'objective.buoy_rounded':  '¡Boya!',
+    'objective.return_start':  'Regresá a la largada',
+
+    // Tutorial
+    'tutorial.wind':           'Esta flecha muestra de dónde viene el viento.',
+    'tutorial.mainsheet':      'Cazá el cabo para tensar la vela. Filalo para soltarla.',
+    'tutorial.helm':           'Girá la rueda para maniobrar el barco.',
+    'tutorial.no_go':          'No podés navegar directo contra el viento. Apuntá a un lado.',
+    'tutorial.start':          '¡Buen viento!',
+    'tutorial.next':           'Continuar',
+    'tutorial.skip':           'Saltear',
+    'tutorial.replay':         'Ver tutorial',
+
     // Visual Indicators Panel
     'indicators.button_label': 'Indicadores',
     'indicators.panel_title':  'Indicadores Visuales',
@@ -632,6 +754,34 @@ const TRANSLATIONS = {
     'layout.mode_banner':      'Drag the controllers to wherever feels comfortable',
     'layout.done':             'Done',
 
+    // Stuck in irons
+    'irons.label':             'IN IRONS',
+
+    // Points of sail (for label aid)
+    'pos.in_irons':            'In Irons',
+    'pos.close_hauled':        'Close-hauled',
+    'pos.close_reach':         'Close Reach',
+    'pos.beam_reach':          'Beam Reach',
+    'pos.broad_reach':         'Broad Reach',
+    'pos.running':             'Running',
+
+    // Pause
+    'pause.restart':           'Restart',
+
+    // Objective / buoy events
+    'objective.buoy_rounded':  'Buoy!',
+    'objective.return_start':  'Return to start',
+
+    // Tutorial
+    'tutorial.wind':           'This arrow shows where the wind is coming from.',
+    'tutorial.mainsheet':      'Pull the rope to trim your sail. Ease it to release.',
+    'tutorial.helm':           'Turn the wheel to steer the boat.',
+    'tutorial.no_go':          'You cannot sail directly into the wind. Aim to one side.',
+    'tutorial.start':          'Good luck. Set sail!',
+    'tutorial.next':           'Continue',
+    'tutorial.skip':           'Skip',
+    'tutorial.replay':         'View tutorial',
+
     // Visual Indicators Panel
     'indicators.button_label': 'Indicators',
     'indicators.panel_title':  'Visual Indicators',
@@ -671,6 +821,7 @@ Visual overlays to help beginners understand what's happening. All togglable via
 | **Sail trim guide** | `aid.trim_guide` | Ghost boom line showing the *optimal* trim angle for the current AWA (dashed) |
 | **Wind arrows on water** | — | Low-opacity directional arrows across the water background |
 | **AWA readout** | `aid.awa_label` | Small number near the boat showing current Apparent Wind Angle in degrees |
+| **Point-of-sail label** | `pos.*` keys | Text near the boat showing the current point of sail (e.g. "Ceñida", "Través"). Color-coded: close-hauled = blue, reach = green, running = orange, in irons = red. Updates continuously as AWA changes. |
 
 When the trim guide is on, render a dashed boom line at the optimal angle alongside the actual boom. The player learns to match the solid boom to the dashed guide.
 
@@ -754,7 +905,9 @@ All sounds should be synthesized procedurally or embedded inline — no external
 | Water ambience | Always | Low looping ocean background |
 | Sail luff | AWA < 40° | Flapping fabric sound, intensity proportional to speed |
 | Tack / jibe | On `justTacked` or `justJibed` event | Short whoosh |
-| Dock success | On objective complete | Pleasant chime |
+| Buoy rounded | On `buoyRounded` event | Short bright ping |
+| Island collision | On grounding | Dull thud |
+| Dock success / objective complete | On `complete` event | Pleasant chime |
 
 ---
 
@@ -912,6 +1065,27 @@ Camera setup: `gameScene.cameras.main.startFollow(boatSprite, true, 0.1, 0.1)` (
 - [ ] Wake length and width scale naturally with speed (long/wide at speed, short/narrow when slow).
 - [ ] Water dashes transition smoothly between Calm / Choppy / Rough tiers as wind speed changes.
 - [ ] At Rough tier (>18 kts), water is visually noticeably more agitated than at Calm tier (<10 kts).
+- [ ] Both controllers respond simultaneously to independent touches (multi-touch).
+- [ ] Browser default gestures (pinch-zoom, scroll) are suppressed on the canvas.
+- [ ] When the boat runs aground on an island, it slows sharply and the hull flashes red. It cannot pass through islands.
+- [ ] Tangential sliding along island edges works; only perpendicular velocity is cancelled.
+- [ ] A dark vignette appears on the screen edge when the boat is within 150px of the world boundary.
+- [ ] The boat cannot leave the world boundary rectangle.
+- [ ] Buoys must be rounded in numeric order. Rounding out-of-order has no effect.
+- [ ] On rounding, the buoy flashes yellow, a ping plays, and a brief text appears and fades.
+- [ ] After rounding all buoys, entering the start zone triggers the completion banner.
+- [ ] The start zone is rendered as two coloured posts with a dashed line between them.
+- [ ] Stuck-in-irons state is entered after 2 continuous seconds of AWA < 30° and speed < 1 kts.
+- [ ] While in irons: rudder effectiveness is 20%, no-go arc pulses, label is visible.
+- [ ] Escaping irons by easing and applying helm restores normal sailing.
+- [ ] Pause menu has a Restart button that resets position, wake, and objective without exiting.
+- [ ] Tutorial coach mark sequence fires on first game launch.
+- [ ] Tutorial can be skipped from step 1 and replayed from Settings.
+- [ ] Each tutorial step correctly highlights its target element and blocks other input.
+- [ ] Point-of-sail label updates correctly across all AWA ranges and is colour-coded.
+- [ ] Wind shift cue pulses the HUD wind arrow when wind variability causes a shift > 5°.
+- [ ] In landscape orientation, controllers default to bottom corners. In portrait, they default to center-sides.
+- [ ] On screens narrower than 400px, the Indicators Panel is scrollable and controllers scale to 80%.
 - [ ] Indicator on/off states persist to storage and are restored on reload.
 - [ ] Boat displacement setting in World Configuration changes how quickly the boat accelerates/decelerates.
 - [ ] All user-visible strings come from `TRANSLATIONS` via `t()` — no hardcoded text anywhere.
