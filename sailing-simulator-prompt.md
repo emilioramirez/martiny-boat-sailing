@@ -398,7 +398,12 @@ After step 5: set `sailsim_tutorial_done = true` in storage. A "View tutorial" b
 
 ## 8. Visual Asset Specification
 
-All assets use only programmatic drawing — no external image files. Every asset is described by its visual properties; the specific drawing API used belongs in Part 2.
+Assets fall into two categories depending on complexity:
+
+- **World objects** (boat, buoys, water, islands, dock, vectors, overlays): simple geometric shapes well-suited to programmatic drawing in any engine. No external files needed.
+- **Controller widgets** (Mainsheet rope and Helm wheel): too complex for clean programmatic drawing — the rope must morph fluidly between shapes and the wheel needs fine detail. These should be implemented as **embedded SVG or base64-encoded sprites** in all engines. The specific embedding technique belongs in Part 2, but the asset design intent is described below for both.
+
+Every asset's visual properties are engine-agnostic; the drawing technique belongs in Part 2.
 
 | Asset | Shape & dimensions | Colors | Behavior |
 |---|---|---|---|
@@ -413,8 +418,10 @@ All assets use only programmatic drawing — no external image files. Every asse
 | **Water background** | Fills entire world. Base layer: solid fill. Over it: a layer of short animated dashes drifting in the wind direction, density and intensity driven by wind speed (see wind-reactive water table below). | Base: dark navy blue. Dash color: light blue/white at varying alpha. Stronger wind makes the water subtly darker. | Dashes tile seamlessly and wrap at world edges. Wind speed changes re-parameterize the animation in real time. |
 | **Wind arrows (water)** | Small chevron arrows tiled across the water | Low opacity (0.2), white/light blue | Point in wind direction; update only when wind changes |
 | **No-go zone arc** | Semi-transparent arc at the bow, ±40° spread | Red, alpha 0.3 | Rotates with boat; togglable |
-| **Mainsheet Controller rope** | Taut: ~100×6px tall thin line with braided cross-hatch. Eased: ~30×18px short wavy segment. Morphs between states. | Rope: warm brown/tan. Background panel: dark, alpha 0.5, rounded corners. | Cleat handle (circle, ~12px) at bottom; drags to control trim |
-| **Helm Controller wheel** | Circle ~80px diameter, 6 spokes, grab handle (~10px circle) on rim. Adjacent mini-boat silhouette (~50×16px) with rudder line at stern. | Wheel: dark wood tone, gold accents. Panel: same as rope controller. | Wheel rotates on drag; rudder line on mini-boat rotates to match; PORT/STBD labels highlight |
+| **Mainsheet Controller rope** ⚑ | Two SVG states: **taut** (tall ~100×6px straight rope, visible braid cross-hatch pattern) and **eased** (short ~30×18px with 3 sine-wave undulations). The engine lerps between them using `opacity` or `scaleY`/`scaleX` tweens on two overlapping SVG elements, or by morphing SVG path `d` attributes. Cleat handle is a separate small circle element at the bottom. Background panel: rounded rect, dark, alpha 0.5. | Rope: warm brown/tan `#8B6343`. Braid marks: dark `#5C3D1E`. Panel: `#1a1a2e`, alpha 0.5. | Cleat handle drags to control trim. The morph between taut/eased states should feel fluid and continuous, not a swap between two states. |
+| **Helm Controller wheel** ⚑ | One SVG: circular wheel (~80px diameter) with 6 spokes and a circular grab handle on the rim, plus an adjacent top-down boat silhouette (~50×16px) with a short rudder line at the stern. The entire wheel SVG rotates as a unit. The rudder line within the silhouette sub-element rotates independently. Background panel: same as rope controller. | Wheel rim and spokes: dark wood `#3D2B1F`. Grab handle: gold `#C9A84C`. Silhouette: cream `#F5F0E0`. Rudder line: dark `#333`. Panel: same as rope. | The SVG root element rotates with helm angle. The rudder sub-element counter-rotates by `helmAngle × 0.5` to show rudder deflection on the mini-boat. PORT/STBD text labels are HTML elements outside the SVG, positioned flanking the panel. |
+
+> ⚑ **Controller widgets** — use embedded SVG or base64 PNG (see Part 2 for engine-specific embedding). Do not attempt to reproduce these with programmatic drawing — the morphing rope and fine wheel detail will produce inferior results.
 | **Wind vector arrow** | Arrow from boat center, direction = where wind comes FROM. Length proportional to wind speed (8px per knot, max 120px). Arrowhead at tip. Small speed label beside arrow tip. | Sky blue / light blue. | Rotates with live wind direction; length scales with wind speed. Togglable. |
 | **Heading vector (crujía)** | Line from hull center forward along boat heading angle. Fixed length ~80px. Arrowhead at tip. | Bright white / cyan. | Rotates with boat heading. Togglable. |
 | **Velocity vector** | Arrow from hull center in actual movement direction (heading + leeway). Length proportional to boat speed (10px per knot). Arrowhead at tip. | Bright green. | May diverge from heading vector when leeway is present — the gap between the two is educationally significant. Togglable. |
@@ -929,7 +936,8 @@ All sounds should be synthesized procedurally or embedded inline — no external
 | Game library | **Phaser** (latest stable — verify at phaser.io) loaded via CDN | Mature, canvas/WebGL, scene management, input, camera |
 | Physics | Custom `SailingPhysics` class (see Section 4) | Sailing math is domain-specific; do NOT use Phaser Arcade Physics or Matter.js |
 | Rendering | Phaser WebGL (Canvas fallback) | Phaser default |
-| Assets | Programmatically drawn via Phaser Graphics API | No external image files — single file delivery |
+| World assets | Programmatically drawn via Phaser Graphics API | Simple geometry — no external files needed |
+| Controller widgets | Inline SVG embedded in the HTML + loaded as Phaser textures via base64 | Rope morph and wheel detail require SVG quality; avoids external files |
 | Scaling | `Phaser.Scale.FIT`, base 800×600 | Works on all screen sizes |
 | Touch input | Phaser built-in pointer events | Unified mouse + touch |
 | Persistence | `localStorage` | Controller positions, language preference |
@@ -938,7 +946,9 @@ All sounds should be synthesized procedurally or embedded inline — no external
 
 ## 14. Rendering & Assets — Phaser Implementation
 
-Use **`Phaser.GameObjects.Graphics`** to draw all assets described in Section 8. No external textures.
+World assets use **`Phaser.GameObjects.Graphics`** (programmatic drawing). Controller widgets use **inline SVG converted to base64 textures** — do not attempt to replicate them with the Graphics API.
+
+### World assets — Phaser Graphics API
 
 | Asset | Phaser drawing approach |
 |---|---|
@@ -946,19 +956,51 @@ Use **`Phaser.GameObjects.Graphics`** to draw all assets described in Section 8.
 | **Mast** | `graphics.fillCircle(x, y, 5)` |
 | **Boom** | `graphics.lineBetween(mx, my, bx, by)` — rotate the Graphics object with `setAngle()` |
 | **Sail** | `graphics.fillTriangle(...)`, `graphics.setAlpha(0.6)` |
-| **Wake trail** | Array of recent positions; draw with `graphics.strokePoints()`, decreasing alpha per segment |
 | **Buoy** | `graphics.strokeCircle()` + `this.add.text()` for label |
 | **Island** | `graphics.fillPoints(polygon)` with two passes (sandy outer, green inner) |
 | **Dock** | `graphics.fillRect()` repeated for stripes; dashed rectangle via short `lineBetween` segments |
 | **Water base** | `graphics.fillRect(0, 0, worldW, worldH)` in dark navy; color tweened toward grey-blue as wind speed increases |
-| **Water dashes (wind-reactive)** | Pool of dash objects (plain objects with `{x, y, angle, phase}`). Each frame: advance `x += driftSpeed * windDx * delta`, `y += driftSpeed * windDy * delta`; wrap at world bounds. Draw each dash as a short `strokePoints` of 3–4 sine-offset points. Re-parameterize count/length/alpha when wind tier changes (lerp over 60 frames). Do NOT recreate the pool on tier change — adjust properties in place. |
-| **Wake (V-wake)** | Rolling array of `{x, y, age}` — push current boat position every frame, remove entries where `age > 1.5s`. On each draw: iterate array, compute lateral offset per entry (`offset = (age/1.5) * 35 * (speed/15)`), draw port and starboard offset points as two `strokePoints` paths with per-point alpha. Use `graphics.clear()` + redraw each frame (wake is fast to draw — only ~60 points). |
-| **Wind arrows** | Generate once on a `RenderTexture` via `graphics.fillTriangle()`; update only when wind direction changes |
-| **No-go zone arc** | `graphics.slice(x, y, r, startAngle, endAngle)` in red with `setAlpha(0.3)`; child of boat |
-| **Rope controller** | `graphics.strokeLineShape()` for taut state; `graphics.strokePoints(curvedPath)` for eased state |
-| **Helm controller** | `graphics.strokeCircle()` for wheel rim, `graphics.lineBetween()` for spokes, `graphics.fillCircle()` for grab handle |
+| **Water dashes (wind-reactive)** | Pool of plain objects `{x, y, angle, phase}`. Each frame: advance position by `driftSpeed * windDir * delta`; wrap at world bounds. Draw each as a short `strokePoints` of 3–4 sine-offset points. Re-parameterize count/length/alpha on tier change by tweening properties in place — do NOT recreate the pool. |
+| **Wake (V-wake)** | Rolling array of `{x, y, age}`. Push current position each frame; remove entries where `age > 1.5s`. Per draw: compute lateral offset `(age/1.5) * 35 * (speed/15)`, draw two `strokePoints` paths (port + starboard) with per-point alpha. `graphics.clear()` + full redraw each frame (~60 points, negligible cost). |
+| **Wind arrows** | Generate once on a `RenderTexture` via `graphics.fillTriangle()`; invalidate and redraw only when wind direction changes. |
+| **No-go zone arc** | `graphics.slice(x, y, r, startAngle, endAngle)` in red with `setAlpha(0.3)`; child of boat container. |
+| **Vector overlays** (indicators) | `graphics.lineBetween()` + `graphics.fillTriangle()` for arrowheads; redrawn each frame on a dedicated overlay Graphics object above the world layer. |
 
-All interactive widget Graphics objects live in a fixed camera (not the world camera) so they don't scroll with the map.
+### Controller widgets — inline SVG → base64 textures
+
+Define both SVGs as template literals inside the `<script>` block. Convert to base64 and load into Phaser as textures via `this.textures.addBase64(key, dataURI)` before the GameScene starts. Render with `this.add.image()` or `this.add.sprite()`.
+
+**Mainsheet Controller — two SVG states:**
+
+```js
+// Taut state SVG (rope is long and thin, ~100×40px viewBox)
+const ROPE_TAUT_SVG = `<svg xmlns="..." viewBox="0 0 40 110">
+  <!-- vertical rope body with diagonal cross-hatch braid marks -->
+  <!-- cleat handle circle at bottom -->
+</svg>`;
+
+// Eased state SVG (rope is short and wavy, ~40×50px viewBox)
+const ROPE_EASED_SVG = `<svg xmlns="..." viewBox="0 0 40 55">
+  <!-- short thick rope with 3 sine-wave undulations -->
+  <!-- same cleat handle at bottom -->
+</svg>`;
+```
+
+At runtime: display both images stacked at the same position. Tween `tautImage.alpha` from 1→0 and `easedImage.alpha` from 0→1 as `sailTrimTarget` moves from 0° to 85°. This cross-fade produces the morph effect without SVG path animation.
+
+**Helm Controller — one SVG, two moving parts:**
+
+```js
+const HELM_SVG = `<svg xmlns="..." viewBox="0 0 120 140">
+  <!-- wheel group: rim circle, 6 spokes, grab handle on rim -->
+  <!-- mini-boat silhouette group below the wheel -->
+  <!-- rudder line within the silhouette group -->
+</svg>`;
+```
+
+Load as a single texture. Rotate the entire `this.add.image(helmTexture)` object to reflect helm angle. For the rudder line on the mini-boat: overlay a separate thin `Graphics` line drawn each frame at the silhouette's stern position, rotated by `helmAngle * 0.5`. This avoids needing two separate SVG layers.
+
+**Both widgets** live on a UI layer with `setScrollFactor(0)` so they never scroll with the world camera. The background panel (rounded rect, dark semi-transparent) is drawn with Graphics behind each widget image.
 
 ---
 
