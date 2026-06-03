@@ -75,7 +75,7 @@
         };
 
         // Tutorial button — primary CTA
-        woodBtn(cx, 108, 280, 48, t('tutorial.replay'), '20px', () => {
+        woodBtn(cx, 108, 308, 53, t('tutorial.replay'), '22px', () => {
           this.scene.start('GameScene', { map: MAPS[0], forceTutorial: true });
         });
 
@@ -89,10 +89,18 @@
 
         // Map buttons — stacked vertically
         MAPS.forEach((m, i) => {
-          woodBtn(cx, 188 + i * 42, 240, 34, t(m.nameKey), '14px', () => {
+          woodBtn(cx, 188 + i * 42, 264, 37, t(m.nameKey), '15px', () => {
             this.scene.start('GameScene', { map: m });
           });
         });
+
+
+        // Credit (bottom-right)
+        this.add.text(W - 10, H - 10,
+          'Developed by Gaucho - https://github.com/emilioramirez',
+          { fontSize: '10px', fontFamily: 'Arial', color: '#c8a050',
+            stroke: '#000000', strokeThickness: 2, alpha: 0.7 }
+        ).setOrigin(1, 1);
 
         // Lang toggle (top-right) — styled to match
         const langBtn = this.add.text(W - 14, 14,
@@ -111,10 +119,14 @@
       constructor() { super({ key: 'UIScene', active: true }); }
 
       create() {
-        const btn = this.add.text(10, 8, '⛶', {
+        const btn = this.add.text(this.scale.width / 2 + 35, 8, '⛶', {
           fontSize: '22px', fontFamily: 'Arial', color: '#aabbcc',
           stroke: '#000000', strokeThickness: 3,
-        }).setInteractive({ useHandCursor: true }).setDepth(200).setScrollFactor(0);
+        }).setOrigin(0.5, 0).setInteractive({
+          hitArea: new Phaser.Geom.Rectangle(-22, -8, 44, 44),
+          hitAreaCallback: Phaser.Geom.Rectangle.Contains,
+          useHandCursor: true,
+        }).setDepth(200).setScrollFactor(0);
 
         btn.on('pointerdown', () => {
           if (this.scale.isFullscreen) this.scale.stopFullscreen();
@@ -144,6 +156,14 @@
 
     // Expose game instance for lang-change events
     window._phaserGame = game;
+  </script>
+  <script>
+    window.onerror = (msg, src, line) => {
+      document.body.insertAdjacentHTML('beforeend',
+        `<div style="position:fixed;top:0;left:0;right:0;background:#c00;color:#fff;
+         font:13px monospace;padding:8px;z-index:9999;word-break:break-all">
+         ${line}: ${msg}</div>`);
+    };
   </script>
 </body>
 </html>

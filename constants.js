@@ -65,7 +65,7 @@ const CONSTANTS = {
   },
 
   // Physics scale
-  KTS_TO_PX: 25,   // 1 knot = 25 px/s in world space
+  KTS_TO_PX: 20,   // 1 knot = 20 px/s in world space
 
   // UI
   WORLD_EDGE_WARNING_DIST: 150,

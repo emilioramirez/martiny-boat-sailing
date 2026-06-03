@@ -35,7 +35,7 @@ There is no score or time pressure by default. It is a sandbox learning tool wit
 - **Wind arrows** tiled across the water surface show the wind direction at a glance (like grass bending in wind).
 - The boat leaves a **wake trail** behind it — a fading dashed white line.
 - Islands and buoys exist in world space and move as the camera follows the boat.
-- A **red arc** in front of the bow (optional, togglable) shows the no-go zone — the angular range where the boat can't sail into the wind.
+- A **red arc** in front of the bow (togglable) shows the no-go zone — the angular range where the boat can't sail into the wind. The arc is only visible when the boat is actually inside the no-go zone (|AWA| < `NO_GO_ZONE_DEG`); it hides automatically when sailing clear of it.
 
 ### HUD (always visible, non-intrusive)
 
@@ -103,30 +103,35 @@ Both controllers must be simultaneously operable. Each controller claims its own
 
 ### Helm Controller (rudder / steering)
 
-The helm controller is a **mini helm wheel** that the user rotates to steer, rendered next to a **miniature top-down boat silhouette** so the player can always see the rudder effect.
+The helm controller is a **tiller (caña)** widget. The user drags it horizontally to steer — exactly like a real tiller. It sits above a **miniature top-down boat silhouette** at the stern so the player sees the tiller extending into the cockpit.
 
 **Interaction:**
-- The wheel has a visible **grab handle** on its rim. The user drags this handle in a circular arc.
-- **Desktop + Mobile**: Drag clockwise = starboard (turn right); counter-clockwise = port (turn left).
-- Maximum wheel rotation: ±90° from center, mapping to ±45° rudder angle on the actual boat.
-- When released, the wheel gradually springs back to center, which gradually centers the rudder (does not snap).
+- **Horizontal drag**: drag right → tiller goes right → boat turns **port** (left). Drag left → boat turns **starboard**. This is the real-world tiller inversion (`return -helmAngle / 90` from the controller).
+- Maximum tiller deflection: ±90° maps to ±60° visual sweep from straight-up.
+- **Desktop**: tiller holds its position when released.
+- **Mobile**: tiller springs back to center when released (spring rate 3.0×/s). Detected via `scene.sys.game.device.os.desktop`.
+- Sensitivity: 1.4° per pixel of horizontal drag.
 
 **Visual composition of the widget:**
 
 ```
-  ◄ PORT        STBD ►
+  ◄ BABOR      ESTRIBOR ►
       ┌──────────────┐
-      │    [wheel]   │  ←── 80px diameter helm wheel
-      │              │        with 6 spokes + rim grab handle
-      │  [mini boat] │  ←── 50×18px top-down hull silhouette
-      │    rudder ╱  │        rudder line at stern rotates live
+      │    CAÑA      │  ←── panel title label (i18n key 'helm.label')
+      │  ╱ tiller ╲  │  ←── tiller shaft from stern pivot, extends upward
+      │    [pivot]   │  ←── pivot cap at stern (y=+41 in local coords)
+      │  [mini boat] │  ←── 13×4px hull silhouette (3.33:1 ratio matching real boat)
       └──────────────┘
 ```
 
-- Circular wheel with 6 evenly-spaced spokes and a grab handle on the rim.
-- Adjacent: small top-down boat silhouette. A **rudder line** at the stern rotates to match current helm angle.
-- Port/starboard labels (i18n keys `helm.port` / `helm.starboard`) flank the widget. The active-side label highlights when the helm is deflected.
-- All on a semi-transparent rounded-rect background panel.
+- **Tiller shaft**: line from stern pivot (0, +41) extending upward. Sweep ±60° from straight-up (-90°) as helm angle changes. Grab handle: gold circle at tip (radius 8px).
+- **Range arc**: faint arc showing the full tiller sweep range.
+- **Panel title**: `t('helm.label')` centered at top of panel (10px bold, muted color).
+- **Port/starboard labels** (`helm.port` / `helm.starboard`) flank the panel, the active-side highlights white when helm is deflected > 5°.
+- **Mini-boat silhouette**: elongated polygon matching real boat proportions (hull length 13px, half-width 4px = 3.33:1 ratio). Bow at top, stern at bottom where the pivot is.
+- All on a semi-transparent rounded-rect background panel (130×150px).
+
+**Physics**: `update(dt)` returns `-helmAngle / 90` — negative because tiller direction is opposite to boat turn direction.
 
 ---
 
@@ -384,7 +389,16 @@ A settings panel accessible from the main menu and from the in-game pause menu.
 | Language | Button group | `ES` / `EN` | `ES` (Spanish) |
 | Map | Button group | All map IDs | Map 1 |
 
-The settings panel uses two tabs: **Game** (`settings.tab_game`) and **Sound** (`settings.tab_sound`). The Game tab contains all settings above. The Sound tab contains volume controls for each audio category:
+The settings panel is accessed via the **pause button** (⏸, top-center) and uses **four tabs**: **Game** (`settings.tab_game`), **Sound** (`settings.tab_sound`), **Layout** (`settings.tab_layout`), and **Indicators** (`indicators.button_label`).
+
+- **Game tab**: wind direction/speed, boat displacement, language.
+- **Sound tab**: volume controls for each audio category.
+- **Layout tab**: controller slot buttons (6-position grid per controller). This tab replaces the former inline layout section in the Game tab.
+- **Indicators tab**: the 5 vector/overlay toggles (see Section 12). This tab replaces the former floating HUD button.
+
+The panel has three always-visible bottom buttons: **Reiniciar** (red), **Continuar** (center, blue), **← Menú** (grey). The Resume button lives at the bottom, not the top.
+
+The Sound tab contains volume controls for each audio category:
 
 | Volume setting | i18n key | Default |
 |---|---|---|
@@ -681,8 +695,11 @@ const TRANSLATIONS = {
     'trim.trimmed':            'CAZADA',
     'trim.stalled':            'PARADA',
     'trim.luffing':            'FLAMEA',
+    'trim.label_ease':         'FILAR',   // gauge label on controller widget (action)
+    'trim.label_trim':         'CAZAR',   // gauge label on controller widget (action)
 
     // Helm controller
+    'helm.label':              'CAÑA',    // panel title
     'helm.port':               'BABOR',
     'helm.starboard':          'ESTRIBOR',
 
@@ -747,7 +764,7 @@ const TRANSLATIONS = {
     'notif.trim_perfect':      '¡Vela en punto!',
     'notif.luffing_tip':       'La vela flamea — girá para salir de la zona muerta',
     'notif.irons_tip':         'En hierros: filá la escota y da el timón a un lado',
-    'notif.tack_success':      'Tacada',
+    'notif.tack_success':      'Virada',
     'notif.jibe_success':      'Virada por popa',
     'notif.approach_dock':     'Reducí velocidad para atracar',
     'notif.running_warn':      'Cuidado — riesgo de virada involuntaria',
@@ -770,6 +787,7 @@ const TRANSLATIONS = {
     // Settings panel tabs
     'settings.tab_game':       'Juego',
     'settings.tab_sound':      'Sonido',
+    'settings.tab_layout':     'Controles',
 
     // Volume controls
     'settings.vol_master':     'Volumen general',
@@ -782,10 +800,10 @@ const TRANSLATIONS = {
     'layout.ms_row':           'Escota',
 
     // Stuck in irons
-    'irons.label':             'EN HIERROS',
+    'irons.label':             'PROA AL VIENTO',
 
     // Points of sail (for label aid)
-    'pos.in_irons':            'En Hierros',
+    'pos.in_irons':            'Proa al Viento',
     'pos.close_hauled':        'Ceñida',
     'pos.close_reach':         'Descuartelar',
     'pos.beam_reach':          'Través',
@@ -810,7 +828,7 @@ const TRANSLATIONS = {
     // Tutorial
     'tutorial.wind':           'Esta flecha muestra de dónde viene el viento.',
     'tutorial.mainsheet':      'Cazá el cabo para tensar la vela. Filalo para soltarla.',
-    'tutorial.helm':           'Girá la rueda para maniobrar el barco.',
+    'tutorial.helm':           'Mové la caña de lado a lado para maniobrar el barco. Caña a babor → barco a estribor, y viceversa.',
     'tutorial.no_go':          'No podés navegar directo contra el viento. Apuntá a un lado.',
     'tutorial.start':          '¡Buen viento!',
     'tutorial.next':           'Continuar',
@@ -845,8 +863,11 @@ const TRANSLATIONS = {
     'trim.trimmed':            'TRIMMED',
     'trim.stalled':            'STALLED',
     'trim.luffing':            'LUFFING',
+    'trim.label_ease':         'EASE',    // gauge label on controller widget (action)
+    'trim.label_trim':         'TRIM',    // gauge label on controller widget (action)
 
     // Helm controller
+    'helm.label':              'TILLER',  // panel title
     'helm.port':               'PORT',
     'helm.starboard':          'STBD',
 
@@ -934,6 +955,7 @@ const TRANSLATIONS = {
     // Settings panel tabs
     'settings.tab_game':       'Game',
     'settings.tab_sound':      'Sound',
+    'settings.tab_layout':     'Controls',
 
     // Volume controls
     'settings.vol_master':     'Master volume',
@@ -974,7 +996,7 @@ const TRANSLATIONS = {
     // Tutorial
     'tutorial.wind':           'This arrow shows where the wind is coming from.',
     'tutorial.mainsheet':      'Pull the rope to trim your sail. Ease it to release.',
-    'tutorial.helm':           'Turn the wheel to steer the boat.',
+    'tutorial.helm':           'Move the tiller side to side to steer the boat. Tiller to port → boat turns starboard, and vice versa.',
     'tutorial.no_go':          'You cannot sail directly into the wind. Aim to one side.',
     'tutorial.start':          'Good luck. Set sail!',
     'tutorial.next':           'Continue',
@@ -1028,26 +1050,28 @@ When the trim guide is on, render a dashed boom line at the optimal angle alongs
 
 ## 12. Visual Indicators Panel
 
-A button in the HUD (vector/eye icon, label from `t('indicators.button_label')`) opens a **floating panel** overlaid on the game world. The panel does not pause the game — it stays open while sailing. Clicking the button again (or tapping the X) closes it.
+The Indicators Panel is the **4th tab** of the pause panel (`t('indicators.button_label')`). It does **not** have a separate floating HUD button — all access is through the pause menu. The game must be paused to toggle indicators, but the overlays remain visible while playing once enabled.
 
-### Panel UI
+### Tab UI (inside pause panel)
 
 ```
 ┌─────────────────────────────────┐
-│  Indicadores Visuales        ✕  │
-├─────────────────────────────────┤
 │  🔵  Vector de viento     [OFF] │
+│                                 │
 │  ⬜  Dirección de crujía  [OFF] │
+│                                 │
 │  🟢  Vector de velocidad   [ON] │
+│                                 │
 │  🟡  Inercia del barco     [ON] │
+│                                 │
 │  🗺  Minimapa              [ON] │
 └─────────────────────────────────┘
 ```
 
-- Each row: colored dot matching the indicator's color, label (from `t()`), ON/OFF toggle text button.
-- **Toggle button** (`t('indicators.button_label')`): positioned at center-right of screen (`x = scale.width - 10`, `y = scale.height / 2`), origin `(1, 0.5)`. Opens/closes the panel.
-- **Panel position**: right side of screen, vertically centered (`x = scale.width - PW - 8`, `y = scale.height / 2 - PH / 2`). Does not scroll with the world. Depth 30.
-- Panel background: semi-transparent dark (`0x0c1624`, alpha 0.96), rounded corners, thin blue border.
+- Each row: colored dot (radius 6px), label (from `t()`, 13px), ON/OFF toggle button (13px, padding {x:12,y:8}), right-aligned.
+- 5 rows distributed equitably across the content area (~50px step).
+- `buildTabContent(container)` method is called from `_buildPausePanel()` and adds rows to the tab group container.
+- No standalone floating panel or HUD toggle button.
 
 ### Indicators
 
@@ -1913,7 +1937,13 @@ Load as a single texture. Rotate the entire `this.add.image('helm-wheel')` objec
 
 ```
 index.html           loads CDN + all .js files in order (see Section 14)
-                     creates Phaser.Game with { activePointers: 3, scene: [MenuScene, GameScene, PauseScene] }
+                     creates Phaser.Game with { activePointers: 3, scene: [MenuScene, GameScene, UIScene] }
+                     UIScene: active:true persistent scene — renders fullscreen toggle button (⛶) at
+                       x = scale.width/2 + 35, y = 8, origin (0.5,0), depth 200, hitArea Rectangle(-22,-8,44,44).
+                       Hides on enterfullscreen, shows on leavefullscreen.
+                       Runs over every scene without interrupting them.
+                     Pause button (⏸): in GameScene HUD, x = scale.width/2 - 35, y = 10, hitArea Rectangle(-22,-8,44,44).
+                       Both buttons are 70px apart (center-to-center), each with 44×44px tap area (26px gap).
 
 constants.js         CONSTANTS — all tuning values; no dependencies
 translations.js      TRANSLATIONS + t() + setLanguage(); no dependencies
@@ -1933,13 +1963,19 @@ input-manager.js     InputManager — registered in GameScene.create()
                      Exposes: rudderAxis [-1,+1], sailTrimTarget [0°,85°]
 
 mainsheet-controller.js
-  Phaser Container: panel bg + taut SVG image + eased SVG image + cleat handle text/graphic
-  Drag: pointermove on claimed pointer → cross-fade taut/eased alpha → write InputManager
+  Phaser Container: panel bg + EASE/TRIM gauge labels (t('trim.label_ease')/t('trim.label_trim')) on left side
+    + dark track rect on right side + taut SVG image + eased SVG image + draggable handle circle
+  Drag DOWN = cazar (trim in, trimAngle→0). Drag UP = filar (ease out, trimAngle→85).
+    delta = -(dy/DRAG_RANGE)*85; trimAngle clamped [0,85].
+  Cross-fade taut/eased alpha: taut=1-t, eased=t where t=trimAngle/85.
+  Handle y: bottomY - (trimAngle/85)*(bottomY-topY) — moves up as sail is eased.
 
 helm-controller.js
-  Phaser Container: panel bg + wheel SVG image + port/stbd Text labels
-  Drag: Math.atan2 angular delta → helmAngle (clamped ±90°) → write InputManager
-  Rudder line: Graphics drawn each frame at mini-silhouette stern, angle = helmAngle * 0.5
+  Phaser Container: panel bg + 'CAÑA' title label (t('helm.label')) + port/stbd Text labels
+    + mini-boat silhouette (Graphics, 13×4px hull, 3.33:1 ratio) + tiller Graphics (redrawn each frame)
+  Drag: horizontal deltaX → helmAngle (clamped ±90°) → physics return -helmAngle/90 (real tiller inversion)
+  Visual: tiller pivot at (0,+41) stern, sweeps ±60° from straight-up (-90°+sweep)
+  Desktop: helm holds position on release. Mobile: spring-back 3.0×/s (scene.sys.game.device.os.desktop check)
 
 layout-manager.js    reads/writes localStorage; called by both controllers on drag-end and on load
 objective-tracker.js
@@ -2010,11 +2046,15 @@ game-scene.js (GameScene extends Phaser.Scene)
   _rebuildBuoyVisuals(): restores all buoys to original color + shows detection circles (called by _restartMap)
   _restartMap(): resets boat state + physics + objectiveTracker + buoy visuals + failure state; audio.resume(); returns to play state
 
-  _buildPausePanel(): two-tab container (Game tab + Sound tab)
-    Game tab: wind dir/speed, displacement, layout, language, notifications toggle
+  _buildPausePanel(): four-tab container
+    Game tab: wind dir/speed (< value > buttons), displacement radio buttons, language (ES/EN), tutorial replay
     Sound tab: four volume rows (master/water/luff/effects) with < X% > buttons; _refreshVolRows() updates display
+    Layout tab: 6-slot position grid for helm and mainsheet (arrow-icon buttons, ↖↗←→↙↘)
+    Indicators tab: 5 toggle rows built by indicatorsPanel.buildTabContent(container)
+    Bottom (always visible): Reiniciar | Continuar | ← Menú — three buttons on one row at y=200
     _setTab(name): shows/hides sub-containers, highlights active tab button
     _refreshVolRows(): reads audio.getVol(cat) for each category — guarded (no-op if audio not ready)
+    indicatorsPanel MUST be constructed before _buildPausePanel() — its buildTabContent() is called inside
 
   _buildFailurePanel(): Phaser Container depth 62 — dark red panel (420×260px), dim overlay alpha 0.36 (semi-transparent
     so wreck is visible), reason text, objective reminder, single "Reiniciar misión" button.

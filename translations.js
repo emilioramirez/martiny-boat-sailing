@@ -12,8 +12,11 @@ const TRANSLATIONS = {
     'trim.trimmed':            'CAZADA',
     'trim.stalled':            'PARADA',
     'trim.luffing':            'FLAMEA',
+    'trim.label_ease':         'FILAR',
+    'trim.label_trim':         'CAZAR',
 
     // Helm controller
+    'helm.label':              'CAÑA',
     'helm.port':               'BABOR',
     'helm.starboard':          'ESTRIBOR',
 
@@ -51,6 +54,7 @@ const TRANSLATIONS = {
     'settings.notifications':  'Mostrar notificaciones',
     'settings.tab_game':       'Juego',
     'settings.tab_sound':      'Sonido',
+    'settings.tab_layout':     'Controles',
     'settings.vol_master':     'Volumen general',
     'settings.vol_water':      'Agua',
     'settings.vol_luff':       'Vela (garruchos)',
@@ -168,8 +172,11 @@ const TRANSLATIONS = {
     'trim.trimmed':            'TRIMMED',
     'trim.stalled':            'STALLED',
     'trim.luffing':            'LUFFING',
+    'trim.label_ease':         'EASE',
+    'trim.label_trim':         'TRIM',
 
     // Helm controller
+    'helm.label':              'TILLER',
     'helm.port':               'PORT',
     'helm.starboard':          'STBD',
 
@@ -207,6 +214,7 @@ const TRANSLATIONS = {
     'settings.notifications':  'Show notifications',
     'settings.tab_game':       'Game',
     'settings.tab_sound':      'Sound',
+    'settings.tab_layout':     'Controls',
     'settings.vol_master':     'Master volume',
     'settings.vol_water':      'Water',
     'settings.vol_luff':       'Sail (hanks)',

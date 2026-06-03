@@ -37,6 +37,11 @@ class HelmController {
     bg.lineStyle(1, 0x3a3a5e, 0.8);
     bg.strokeRoundedRect(-W / 2, -H / 2, W, H, 10);
 
+    // Panel title
+    const titleLbl = this.scene.add.text(0, -H / 2 + 12, t('helm.label'), {
+      fontSize: '10px', fontFamily: 'Arial', fontStyle: 'bold', color: '#667788',
+    }).setOrigin(0.5, 0.5);
+
     // PORT / STBD labels — at mid-panel, flanking the tiller arc
     this.portLabel = this.scene.add.text(-W / 2 + 8, -8, t('helm.port'), {
       fontSize: '10px', fontFamily: 'Arial', fontStyle: 'bold', color: '#8899aa',
@@ -52,7 +57,7 @@ class HelmController {
     // Tiller graphic (redrawn every frame)
     this.tillerGfx = this.scene.add.graphics();
 
-    this.container.add([bg, this.portLabel, this.stbdLabel,
+    this.container.add([bg, titleLbl, this.portLabel, this.stbdLabel,
                         this.boatGfx, this.tillerGfx]);
     this._updateVisuals();
   }
@@ -60,26 +65,22 @@ class HelmController {
   _drawMiniBoat() {
     const g = this.boatGfx;
     g.clear();
-    // Silhouette centered at (0, +28): bow at top (y=+15), stern at bottom (y=+41)
+    // Same proportions as the real hull (BOAT_HULL_LENGTH:60 / BOAT_HULL_WIDTH:18 = 3.33:1)
+    // Centered at (0, +28): bow at top (y=+15), stern at bottom (y=+41) — pivot stays at 41
     const bx = 0, by = 28;
+    const hl = 13, hw = 4;   // hw/hl = 0.31, matching real boat ratio
+    const pts = [
+      { x: bx,      y: by - hl },
+      { x: bx + hw, y: by - hl * 0.3 },
+      { x: bx + hw, y: by + hl * 0.7 },
+      { x: bx,      y: by + hl },
+      { x: bx - hw, y: by + hl * 0.7 },
+      { x: bx - hw, y: by - hl * 0.3 },
+    ];
     g.fillStyle(0xf5f0e0, 1);
-    g.fillPoints([
-      { x: bx,      y: by - 13 },
-      { x: bx + 10, y: by - 8  },
-      { x: bx + 10, y: by + 8  },
-      { x: bx,      y: by + 13 },
-      { x: bx - 10, y: by + 8  },
-      { x: bx - 10, y: by - 8  },
-    ], true);
+    g.fillPoints(pts, true);
     g.lineStyle(1, 0x888888, 0.6);
-    g.strokePoints([
-      { x: bx,      y: by - 13 },
-      { x: bx + 10, y: by - 8  },
-      { x: bx + 10, y: by + 8  },
-      { x: bx,      y: by + 13 },
-      { x: bx - 10, y: by + 8  },
-      { x: bx - 10, y: by - 8  },
-    ], true);
+    g.strokePoints(pts, true);
   }
 
   _updateVisuals() {

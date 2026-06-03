@@ -106,14 +106,14 @@ class GameScene extends Phaser.Scene {
     this.input.once('pointerdown', () => this.audio.start(), this);
     this.input.keyboard.once('keydown',   () => this.audio.start(), this);
 
+    // ── Indicators panel (built first — pause panel references it) ───────────
+    this.indicatorsPanel = new IndicatorsPanel(this, this.worldGroup, this.uiGroup, map);
+
     // ── HUD + pause panel — built before cameras ignore so group membership is set
     this._buildHUD();
     this._buildPausePanel();
     this._buildCompletionBanner();
     this._buildFailurePanel();
-
-    // ── Indicators panel ──────────────────────────────────────────────────────
-    this.indicatorsPanel = new IndicatorsPanel(this, this.worldGroup, this.uiGroup, map);
 
     // ── Notification system ───────────────────────────────────────────────────
     this.notifSystem = new NotificationSystem(this, this.uiGroup);
@@ -291,14 +291,13 @@ class GameScene extends Phaser.Scene {
         }
       }
 
-      // Dock collision — crash if entering dock zone too fast
+      // Dock collision — hitting the structure always fails; success zone checked by objective tracker
       if (!this.isFailed && this.mapData.docks && this.mapData.docks.length > 0) {
-        const dock   = this.mapData.docks[0];
-        const inDock = bx >= dock.x && bx <= dock.x + dock.width &&
-                       by >= dock.y && by <= dock.y + dock.height;
-        if (inDock && this.boatSpeed > CONSTANTS.DOCK_SUCCESS_SPEED * 2) {
-          this._triggerFailure('dock');
-        }
+        const dock = this.mapData.docks[0];
+        const ds   = dock.structure ?? dock;
+        const hitStructure = bx >= ds.x && bx <= ds.x + ds.width &&
+                             by >= ds.y && by <= ds.y + ds.height;
+        if (hitStructure) this._triggerFailure('dock');
       }
     }
 
@@ -553,18 +552,47 @@ class GameScene extends Phaser.Scene {
     if (!docks || docks.length === 0) return;
     for (const dock of docks) {
       const g = this.add.graphics();
-      // Striped dock body
+      // Striped dock body — uses structure coords if defined, else dock coords
+      const ds = dock.structure ?? dock;
       const stripeW = 12;
-      for (let i = 0; i < dock.width; i += stripeW * 2) {
+      for (let i = 0; i < ds.width; i += stripeW * 2) {
         g.fillStyle(0xc8a87a, 1);
-        g.fillRect(dock.x + i, dock.y, Math.min(stripeW, dock.width - i), dock.height);
+        g.fillRect(ds.x + i, ds.y, Math.min(stripeW, ds.width - i), ds.height);
         g.fillStyle(0x9b7a52, 1);
-        g.fillRect(dock.x + i + stripeW, dock.y, Math.min(stripeW, dock.width - i - stripeW), dock.height);
+        g.fillRect(ds.x + i + stripeW, ds.y, Math.min(stripeW, ds.width - i - stripeW), ds.height);
       }
-      // Dashed target zone outline
+      // Success zone outline (in water, where the ghost boat sits)
       g.lineStyle(1.5, 0x44ee44, 0.8);
       g.strokeRect(dock.x, dock.y, dock.width, dock.height);
       this.worldGroup.add(g);
+
+      // Ghost boat — ideal docking position and heading
+      const hw = CONSTANTS.BOAT_HULL_WIDTH / 2;
+      const hl = CONSTANTS.BOAT_HULL_LENGTH / 2;
+      const ghost = this.add.graphics();
+      ghost.fillStyle(0x44ffcc, 0.20);
+      ghost.lineStyle(1.5, 0x44ffcc, 0.65);
+      const pts = [
+        { x: 0,   y: -hl },
+        { x: hw,  y: -hl * 0.3 },
+        { x: hw,  y:  hl * 0.7 },
+        { x: 0,   y:  hl },
+        { x: -hw, y:  hl * 0.7 },
+        { x: -hw, y: -hl * 0.3 },
+      ];
+      ghost.fillPoints(pts, true);
+      ghost.strokePoints(pts, true);
+      // Bow marker
+      ghost.fillStyle(0x44ffcc, 0.55);
+      ghost.fillTriangle(-5, -hl + 8, 5, -hl + 8, 0, -hl - 2);
+
+      const ghostContainer = this.add.container(
+        dock.x + dock.width  / 2,
+        dock.y + dock.height / 2,
+        [ghost],
+      );
+      ghostContainer.setAngle(dock.heading);
+      this.worldGroup.add(ghostContainer);
     }
   }
 
@@ -791,17 +819,14 @@ class GameScene extends Phaser.Scene {
     bg.strokeRoundedRect(-PW / 2, -225, PW, 450, 14);
     c.add(bg);
 
-    // ── Title + Resume ──────────────────────────────────────────────────────
+    // ── Title ──────────────────────────────────────────────────────────────
     txt(null, 0, -190, t('pause.title'), {
       fontSize: '20px', fontFamily: 'Arial', fontStyle: 'bold', color: '#ffffff',
-    });
-    this._addBtn(c, 0, -162, t('pause.resume'), () => this._togglePause(), {
-      fontSize: '16px', color: '#44ddff', bg: '#0a1828', padding: { x: 28, y: 10 },
     });
 
     // ── Tab bar ────────────────────────────────────────────────────────────
     const makeTab = (label, name, x) => {
-      const btn = this.add.text(x, -132, label, {
+      const btn = this.add.text(x, -155, label, {
         fontSize: '12px', fontFamily: 'Arial', color: '#44ddff',
         backgroundColor: '#1a2a3a', padding: { x: 20, y: 7 },
       }).setOrigin(0.5, 0.5).setInteractive({ useHandCursor: true });
@@ -809,61 +834,68 @@ class GameScene extends Phaser.Scene {
       c.add(btn);
       return btn;
     };
-    this._tabGameBtn  = makeTab(t('settings.tab_game'),  'game',  -70);
-    this._tabSoundBtn = makeTab(t('settings.tab_sound'), 'sound',  70);
-    sep(null, -112);
+    this._tabGameBtn    = makeTab(t('settings.tab_game'),       'game',      -165);
+    this._tabSoundBtn   = makeTab(t('settings.tab_sound'),      'sound',      -55);
+    this._tabLayoutBtn  = makeTab(t('settings.tab_layout'),     'layout',      55);
+    this._tabIndBtn     = makeTab(t('indicators.button_label'), 'indicators', 165);
+    sep(null, -130);
 
     // ── Tab content groups ──────────────────────────────────────────────────
-    this._settingsGroup = this.add.container(0, 0);
-    this._soundGroup    = this.add.container(0, 0);
+    this._settingsGroup   = this.add.container(0, 0);
+    this._soundGroup      = this.add.container(0, 0);
+    this._layoutGroup     = this.add.container(0, 0);
+    this._indicatorsGroup = this.add.container(0, 0);
     c.add(this._settingsGroup);
     c.add(this._soundGroup);
+    c.add(this._layoutGroup);
+    c.add(this._indicatorsGroup);
+    this.indicatorsPanel.buildTabContent(this._indicatorsGroup);
     const sg = this._settingsGroup;
     const vg = this._soundGroup;
 
     // ══ SETTINGS TAB ═══════════════════════════════════════════════════════
 
     // Wind direction
-    ltxt(sg, lx, -92, t('settings.wind_dir') + ':', {
+    ltxt(sg, lx, -82, t('settings.wind_dir') + ':', {
       fontSize: '12px', fontFamily: 'Arial', color: '#8899aa',
     });
-    this._addBtn(sg, 50, -92, '<', () => {
+    this._addBtn(sg, 50, -82, '<', () => {
       this._baseWindDir = (this._baseWindDir - 15 + 360) % 360;
       this.mapData.wind.direction = this._baseWindDir;
       this._windDirTxt.setText(Math.round(this._baseWindDir) + '°');
       this._refreshWindHUD();
-    }, { padding: { x: 8, y: 4 } });
-    this._windDirTxt = txt(sg, 105, -92, Math.round(this._baseWindDir) + '°', {
+    }, { padding: { x: 14, y: 9 } });
+    this._windDirTxt = txt(sg, 108, -82, Math.round(this._baseWindDir) + '°', {
       fontSize: '13px', fontFamily: 'Arial', color: '#ffffff',
     });
-    this._addBtn(sg, 160, -92, '>', () => {
+    this._addBtn(sg, 165, -82, '>', () => {
       this._baseWindDir = (this._baseWindDir + 15 + 360) % 360;
       this.mapData.wind.direction = this._baseWindDir;
       this._windDirTxt.setText(Math.round(this._baseWindDir) + '°');
       this._refreshWindHUD();
-    }, { padding: { x: 8, y: 4 } });
+    }, { padding: { x: 14, y: 9 } });
 
     // Wind speed
-    ltxt(sg, lx, -64, t('settings.wind_speed') + ':', {
+    ltxt(sg, lx, -40, t('settings.wind_speed') + ':', {
       fontSize: '12px', fontFamily: 'Arial', color: '#8899aa',
     });
-    this._addBtn(sg, 50, -64, '<', () => {
+    this._addBtn(sg, 50, -40, '<', () => {
       this.mapData.wind.speed = Math.max(5, this.mapData.wind.speed - 1);
       this._windSpdTxt.setText(this.mapData.wind.speed + ' kts');
       this._refreshWindHUD();
-    }, { padding: { x: 8, y: 4 } });
-    this._windSpdTxt = txt(sg, 108, -64, this.mapData.wind.speed + ' kts', {
+    }, { padding: { x: 14, y: 9 } });
+    this._windSpdTxt = txt(sg, 108, -40, this.mapData.wind.speed + ' kts', {
       fontSize: '13px', fontFamily: 'Arial', color: '#ffffff',
     });
-    this._addBtn(sg, 160, -64, '>', () => {
+    this._addBtn(sg, 165, -40, '>', () => {
       this.mapData.wind.speed = Math.min(25, this.mapData.wind.speed + 1);
       this._windSpdTxt.setText(this.mapData.wind.speed + ' kts');
       this._refreshWindHUD();
-    }, { padding: { x: 8, y: 4 } });
+    }, { padding: { x: 14, y: 9 } });
 
     // Displacement
-    sep(sg, -42);
-    ltxt(sg, lx, -24, t('indicators.displacement') + ':', {
+    sep(sg, -8);
+    ltxt(sg, lx, 12, t('indicators.displacement') + ':', {
       fontSize: '12px', fontFamily: 'Arial', color: '#8899aa',
     });
     this._dispBtns = {};
@@ -872,70 +904,67 @@ class GameScene extends Phaser.Scene {
       { k: 'medium', lk: 'indicators.disp_medium', v: 2.0 },
       { k: 'heavy',  lk: 'indicators.disp_heavy',  v: 5.0 },
     ].forEach((opt, i) => {
-      const btn = this._addBtn(sg, 50 + i * 80, -1, t(opt.lk), () => {
+      const btn = this._addBtn(sg, 48 + i * 82, 38, t(opt.lk), () => {
         this.displacement = opt.v;
         this._refreshDispBtns();
-      }, { fontSize: '13px' });
+      }, { fontSize: '13px', padding: { x: 12, y: 8 } });
       btn.off('pointerout');
       btn.on('pointerout', () => this._refreshDispBtns());
       this._dispBtns[opt.k] = btn;
     });
     this._refreshDispBtns();
 
-    // Controller layout
-    sep(sg, 22);
-    txt(sg, 0, 40, t('settings.layout'), {
+    // Language
+    sep(sg, 65);
+    ltxt(sg, lx, 88, t('settings.language') + ':', {
       fontSize: '12px', fontFamily: 'Arial', color: '#8899aa',
     });
+    this._addBtn(sg, 50, 88, 'ES', () => { setLanguage('es'); this.scene.restart(); }, { padding: { x: 14, y: 9 } });
+    this._addBtn(sg, 100, 88, 'EN', () => { setLanguage('en'); this.scene.restart(); }, { padding: { x: 14, y: 9 } });
+
+    // Tutorial replay
+    sep(sg, 118);
+    this._addBtn(sg, 0, 148, t('tutorial.replay'), () => {
+      this._togglePause();
+      this.tutorial.replay();
+    }, { fontSize: '13px', color: '#99aabb', padding: { x: 18, y: 11 } });
+
+    // ══ LAYOUT TAB ═════════════════════════════════════════════════════════
+    const lg = this._layoutGroup;
     const SLOT_ICONS = { TL: '↖', TR: '↗', CL: '←', CR: '→', BL: '↙', BR: '↘' };
     const SLOTS  = Object.keys(SLOT_ICONS);
     const slotBx = [-88, -52, -16, 20, 56, 92];
 
-    ltxt(sg, lx, 62, t('layout.helm_row') + ':', {
-      fontSize: '11px', fontFamily: 'Arial', color: '#99aabb',
+    ltxt(lg, lx, -20, t('layout.helm_row') + ':', {
+      fontSize: '12px', fontFamily: 'Arial', color: '#99aabb',
     });
     this._helmSlotBtns = {};
     SLOTS.forEach((s, i) => {
-      const btn = this._addBtn(sg, slotBx[i] - 50, 62, SLOT_ICONS[s], () => {
+      const btn = this._addBtn(lg, slotBx[i] - 50, -20, SLOT_ICONS[s], () => {
         this.layoutManager.setHelm(s);
         this.layoutManager.applyToControllers(this.helm, this.mainsheet);
         this._refreshSlotBtns();
-      }, { fontSize: '14px', padding: { x: 5, y: 3 } });
+      }, { fontSize: '14px', padding: { x: 10, y: 7 } });
       btn.off('pointerout');
       btn.on('pointerout', () => this._refreshSlotBtns());
       this._helmSlotBtns[s] = btn;
     });
 
-    ltxt(sg, lx, 88, t('layout.ms_row') + ':', {
-      fontSize: '11px', fontFamily: 'Arial', color: '#99aabb',
+    ltxt(lg, lx, 42, t('layout.ms_row') + ':', {
+      fontSize: '12px', fontFamily: 'Arial', color: '#99aabb',
     });
     this._msSlotBtns = {};
     SLOTS.forEach((s, i) => {
-      const btn = this._addBtn(sg, slotBx[i] - 50, 88, SLOT_ICONS[s], () => {
+      const btn = this._addBtn(lg, slotBx[i] - 50, 42, SLOT_ICONS[s], () => {
         this.layoutManager.setMainsheet(s);
         this.layoutManager.applyToControllers(this.helm, this.mainsheet);
         this._refreshSlotBtns();
-      }, { fontSize: '14px', padding: { x: 5, y: 3 } });
+      }, { fontSize: '14px', padding: { x: 10, y: 7 } });
       btn.off('pointerout');
       btn.on('pointerout', () => this._refreshSlotBtns());
       this._msSlotBtns[s] = btn;
     });
     this._refreshSlotBtns();
-
-    // Language
-    sep(sg, 112);
-    ltxt(sg, lx, 130, t('settings.language') + ':', {
-      fontSize: '12px', fontFamily: 'Arial', color: '#8899aa',
-    });
-    this._addBtn(sg, 50, 130, 'ES', () => { setLanguage('es'); this.scene.restart(); });
-    this._addBtn(sg, 90, 130, 'EN', () => { setLanguage('en'); this.scene.restart(); });
-
-    // Tutorial replay
-    sep(sg, 145);
-    this._addBtn(sg, 0, 162, t('tutorial.replay'), () => {
-      this._togglePause();
-      this.tutorial.replay();
-    }, { fontSize: '12px', color: '#99aabb' });
 
     // ══ SOUND TAB ══════════════════════════════════════════════════════════
 
@@ -947,32 +976,35 @@ class GameScene extends Phaser.Scene {
     ];
     this._volTxts = {};
     VOL_CATS.forEach(({ cat, lk }, i) => {
-      const ry = -90 + i * 34;
+      const ry = -75 + i * 55;
       ltxt(vg, lx, ry, t(lk) + ':', {
         fontSize: '12px', fontFamily: 'Arial', color: '#8899aa',
       });
       this._addBtn(vg, 40, ry, '<', () => {
         this.audio.setVol(cat, this.audio.getVol(cat) - 0.05);
         this._refreshVolRows();
-      }, { padding: { x: 8, y: 4 } });
-      this._volTxts[cat] = txt(vg, 102, ry, '', {
+      }, { padding: { x: 14, y: 9 } });
+      this._volTxts[cat] = txt(vg, 108, ry, '', {
         fontSize: '13px', fontFamily: 'Arial', color: '#ffffff',
       });
-      this._addBtn(vg, 162, ry, '>', () => {
+      this._addBtn(vg, 175, ry, '>', () => {
         this.audio.setVol(cat, this.audio.getVol(cat) + 0.05);
         this._refreshVolRows();
-      }, { padding: { x: 8, y: 4 } });
+      }, { padding: { x: 14, y: 9 } });
     });
     this._refreshVolRows();
 
     // ══ BOTTOM (always visible) ════════════════════════════════════════════
     sep(null, 178);
-    this._addBtn(c, -80, 200, t('pause.restart'), () => this._restartMap(), {
-      fontSize: '14px', color: '#ff8866',
+    this._addBtn(c, -155, 200, t('pause.restart'), () => this._restartMap(), {
+      fontSize: '14px', color: '#ff8866', padding: { x: 14, y: 10 },
     });
-    this._addBtn(c, 90, 200, '← ' + t('pause.menu'), () => {
+    this._addBtn(c, 0, 200, t('pause.resume'), () => this._togglePause(), {
+      fontSize: '14px', color: '#44ddff', bg: '#0a1828', padding: { x: 14, y: 10 },
+    });
+    this._addBtn(c, 155, 200, '← ' + t('pause.menu'), () => {
       this.scene.start('MenuScene');
-    }, { fontSize: '14px', color: '#aaccdd' });
+    }, { fontSize: '14px', color: '#aaccdd', padding: { x: 14, y: 10 } });
 
     this._setTab('game');
   }
@@ -981,11 +1013,11 @@ class GameScene extends Phaser.Scene {
   _addBtn(container, x, y, label, onClick, opts = {}) {
     const color = opts.color ?? '#44ddff';
     const btn   = this.add.text(x, y, label, {
-      fontSize:        opts.fontSize ?? '13px',
+      fontSize:        opts.fontSize ?? '14px',
       fontFamily:      'Arial',
       color,
       backgroundColor: opts.bg ?? '#0d1a2a',
-      padding:         opts.padding ?? { x: 8, y: 5 },
+      padding:         opts.padding ?? { x: 9, y: 6 },
     }).setOrigin(opts.ox ?? 0.5, opts.oy ?? 0.5)
       .setInteractive({ useHandCursor: true });
     btn.on('pointerover',  () => btn.setColor('#ffffff'));
@@ -1006,14 +1038,19 @@ class GameScene extends Phaser.Scene {
   _setTab(name) {
     this._settingsGroup.setVisible(name === 'game');
     this._soundGroup.setVisible(name === 'sound');
+    this._layoutGroup.setVisible(name === 'layout');
+    this._indicatorsGroup.setVisible(name === 'indicators');
     const activeCol = '#44ddff', inactiveCol = '#667788';
     const activeBg  = '#1a2a3a', inactiveBg  = '#0d1a2a';
-    this._tabGameBtn
-      .setColor(name === 'game'  ? activeCol : inactiveCol)
-      .setBackgroundColor(name === 'game'  ? activeBg : inactiveBg);
-    this._tabSoundBtn
-      .setColor(name === 'sound' ? activeCol : inactiveCol)
-      .setBackgroundColor(name === 'sound' ? activeBg : inactiveBg);
+    for (const [btn, tab] of [
+      [this._tabGameBtn,   'game'],
+      [this._tabSoundBtn,  'sound'],
+      [this._tabLayoutBtn, 'layout'],
+      [this._tabIndBtn,    'indicators'],
+    ]) {
+      btn.setColor(name === tab ? activeCol : inactiveCol)
+         .setBackgroundColor(name === tab ? activeBg : inactiveBg);
+    }
   }
 
   _refreshVolRows() {
@@ -1346,10 +1383,14 @@ class GameScene extends Phaser.Scene {
     ).setOrigin(0.5).setScrollFactor(0).setDepth(25).setVisible(false);
 
     // Pause button (top-center)
-    this.pauseBtn = this.add.text(this.scale.width / 2, 10, '⏸', {
-      fontSize: '20px', fontFamily: 'Arial', color: '#888888',
+    this.pauseBtn = this.add.text(this.scale.width / 2 - 35, 10, '⏸', {
+      fontSize: '22px', fontFamily: 'Arial', color: '#888888',
     }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(20)
-      .setInteractive({ useHandCursor: true });
+      .setInteractive({
+        hitArea: new Phaser.Geom.Rectangle(-22, -8, 44, 44),
+        hitAreaCallback: Phaser.Geom.Rectangle.Contains,
+        useHandCursor: true,
+      });
     this.pauseBtn.on('pointerover',  () => this.pauseBtn.setColor('#ffffff'));
     this.pauseBtn.on('pointerout',   () => this.pauseBtn.setColor('#888888'));
     this.pauseBtn.on('pointerdown',  () => this._togglePause());

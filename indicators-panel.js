@@ -25,11 +25,7 @@ class IndicatorsPanel {
     this.mmGfx = scene.add.graphics().setDepth(22);
     uiGroup.add(this.mmGfx);
 
-    // Panel + toggle button (UI space)
-    this._buildPanel();
-    this._buildToggleBtn();
-    uiGroup.add(this.panel);
-    uiGroup.add(this.toggleBtn);
+    this._toggleBtns = {};
 
     // Velocity direction tracking (from position delta)
     this._prevPos = null;
@@ -191,32 +187,8 @@ class IndicatorsPanel {
 
   // ── Panel UI ────────────────────────────────────────────────────────────────
 
-  _buildPanel() {
-    const W = this.scene.scale.width, H = this.scene.scale.height;
-    const PW = 240, PH = 210;
-
-    this.panel = this.scene.add.container(W - PW - 8, H / 2 - PH / 2).setDepth(30).setVisible(false);
-    const c = this.panel;
-
-    const bg = this.scene.add.graphics();
-    bg.fillStyle(0x0c1624, 0.96);
-    bg.fillRoundedRect(0, 0, PW, PH, 10);
-    bg.lineStyle(1, 0x2a4a6e, 1);
-    bg.strokeRoundedRect(0, 0, PW, PH, 10);
-    c.add(bg);
-
-    c.add(this.scene.add.text(PW / 2, 12, t('indicators.panel_title'), {
-      fontSize: '12px', fontFamily: 'Arial', fontStyle: 'bold', color: '#aaccdd',
-    }).setOrigin(0.5, 0));
-
-    const close = this.scene.add.text(PW - 10, 10, '✕', {
-      fontSize: '13px', fontFamily: 'Arial', color: '#667788',
-    }).setOrigin(1, 0).setInteractive({ useHandCursor: true });
-    close.on('pointerover', () => close.setColor('#ffffff'));
-    close.on('pointerout',  () => close.setColor('#667788'));
-    close.on('pointerdown', () => this.panel.setVisible(false));
-    c.add(close);
-
+  // Called from game-scene._buildPausePanel() to populate the Indicators tab
+  buildTabContent(container) {
     const rows = [
       { key: 'windVector', labelKey: 'indicators.wind_vector',  col: 0x99ccff },
       { key: 'heading',    labelKey: 'indicators.heading',       col: 0xdddddd },
@@ -224,23 +196,24 @@ class IndicatorsPanel {
       { key: 'inertia',    labelKey: 'indicators.inertia',       col: 0xffcc44 },
       { key: 'minimap',    labelKey: 'indicators.minimap',       col: 0x88aadd },
     ];
+    const scene = this.scene;
+    const lx = -210;  // left edge in pause-panel local space (PW=500)
 
-    this._toggleBtns = {};
     rows.forEach((row, i) => {
-      const ry = 36 + i * 33;
+      const ry = -88 + i * 50;
 
-      const dot = this.scene.add.graphics();
+      const dot = scene.add.graphics();
       dot.fillStyle(row.col, 0.9);
-      dot.fillCircle(14, ry + 8, 5);
-      c.add(dot);
+      dot.fillCircle(lx + 6, ry + 10, 6);
+      container.add(dot);
 
-      c.add(this.scene.add.text(28, ry + 1, t(row.labelKey), {
-        fontSize: '12px', fontFamily: 'Arial', color: '#bbccdd',
+      container.add(scene.add.text(lx + 20, ry + 3, t(row.labelKey), {
+        fontSize: '13px', fontFamily: 'Arial', color: '#bbccdd',
       }));
 
-      const btn = this.scene.add.text(PW - 10, ry + 3, 'OFF', {
-        fontSize: '11px', fontFamily: 'Arial', color: '#667788',
-        backgroundColor: '#0d1a2a', padding: { x: 6, y: 3 },
+      const btn = scene.add.text(220, ry + 3, 'OFF', {
+        fontSize: '13px', fontFamily: 'Arial', color: '#667788',
+        backgroundColor: '#0d1a2a', padding: { x: 12, y: 8 },
       }).setOrigin(1, 0).setInteractive({ useHandCursor: true });
 
       btn.on('pointerdown', () => {
@@ -254,23 +227,11 @@ class IndicatorsPanel {
         if (!this._s.minimap) this.mmGfx.clear();
       });
 
-      c.add(btn);
+      container.add(btn);
       this._toggleBtns[row.key] = btn;
     });
 
     this._refreshToggles();
-  }
-
-  _buildToggleBtn() {
-    const W = this.scene.scale.width, H = this.scene.scale.height;
-    this.toggleBtn = this.scene.add.text(W - 10, H / 2, t('indicators.button_label'), {
-      fontSize: '11px', fontFamily: 'Arial', color: '#88bbdd',
-      backgroundColor: '#0d1a2a', padding: { x: 6, y: 3 },
-    }).setOrigin(1, 0.5).setDepth(25).setInteractive({ useHandCursor: true });
-
-    this.toggleBtn.on('pointerover', () => this.toggleBtn.setColor('#ffffff'));
-    this.toggleBtn.on('pointerout',  () => this.toggleBtn.setColor('#88bbdd'));
-    this.toggleBtn.on('pointerdown', () => this.panel.setVisible(!this.panel.visible));
   }
 
   _refreshToggles() {

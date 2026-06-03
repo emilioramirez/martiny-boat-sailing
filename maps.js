@@ -76,7 +76,8 @@ const MAPS = [
     ],
     docks: [
       {
-        x: 950, y: 1280, width: 80, height: 30, heading: 270,
+        x: 900, y: 1260, width: 40, height: 70, heading: 0,
+        structure: { x: 950, y: 1280, width: 80, height: 30 },
         labelKey: 'map.dock.label',
       },
     ],

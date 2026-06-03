@@ -80,7 +80,7 @@ class TutorialManager {
       {
         key: 'tutorial.mainsheet',
         hl: sc.mainsheet
-          ? this._ctrlHl(sc.mainsheet.container, 70, 160)
+          ? this._ctrlHl(sc.mainsheet.container, 95, 185)
           : null,
       },
       {
