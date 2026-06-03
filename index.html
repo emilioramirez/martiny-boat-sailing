@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>Martiny Boat Sailing</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; background: #0a0a1a; overflow: hidden; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+  <!-- Phaser 3 — current stable. Verify at https://phaser.io/download/stable -->
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.87.0/dist/phaser.min.js"></script>
+
+  <!-- Load in strict dependency order -->
+  <script src="constants.js"></script>
+  <script src="translations.js"></script>
+  <script src="maps.js"></script>
+  <script src="layout-manager.js"></script>
+  <script src="audio.js"></script>
+  <script src="sailing-physics.js"></script>
+  <script src="objective-tracker.js"></script>
+  <script src="indicators-panel.js"></script>
+  <script src="notification-system.js"></script>
+  <script src="tutorial-manager.js"></script>
+  <script src="input-manager.js"></script>
+  <script src="mainsheet-controller.js"></script>
+  <script src="helm-controller.js"></script>
+  <script src="game-scene.js"></script>
+
+  <script>
+    class MenuScene extends Phaser.Scene {
+      constructor() { super({ key: 'MenuScene' }); }
+
+      preload() {
+        this.load.image('menu-bg', 'martiny_boat_sailing.jpg');
+      }
+
+      create() {
+        const W = this.scale.width;
+        const H = this.scale.height;
+        const cx = W / 2;
+
+        // Background image — cover, maintain aspect ratio
+        const bgImg = this.add.image(cx, H / 2, 'menu-bg');
+        bgImg.setScale(Math.max(W / bgImg.width, H / bgImg.height));
+
+        // ── Wooden button helper ──────────────────────────────────────────────
+        // Draws a plank-style rounded rect matching the banner in the image.
+        const drawWood = (g, x, y, w, h, hover = false) => {
+          g.clear();
+          g.fillStyle(hover ? 0xe8bf78 : 0xd4a96e, hover ? 0.92 : 0.80);
+          g.fillRoundedRect(x - w / 2, y - h / 2, w, h, 8);
+          g.lineStyle(2.5, 0x7a4010, 0.95);
+          g.strokeRoundedRect(x - w / 2, y - h / 2, w, h, 8);
+        };
+
+        const woodBtn = (x, y, w, h, label, fontSize, onClick) => {
+          const g = this.add.graphics();
+          drawWood(g, x, y, w, h);
+          const txt = this.add.text(x, y, label, {
+            fontSize, fontFamily: 'Arial', fontStyle: 'bold', color: '#1a2a5c',
+          }).setOrigin(0.5).setInteractive({
+            useHandCursor: true,
+            hitArea: new Phaser.Geom.Rectangle(-w / 2, -h / 2, w, h),
+            hitAreaCallback: Phaser.Geom.Rectangle.Contains,
+          });
+          txt.setText(label.toUpperCase());
+          txt.on('pointerover',  () => drawWood(g, x, y, w, h, true));
+          txt.on('pointerout',   () => drawWood(g, x, y, w, h));
+          txt.on('pointerdown',  onClick);
+          return txt;
+        };
+
+        // Tutorial button — primary CTA
+        woodBtn(cx, 108, 280, 48, t('tutorial.replay'), '20px', () => {
+          this.scene.start('GameScene', { map: MAPS[0], forceTutorial: true });
+        });
+
+        // Separator + "Elige un mapa" label
+        const sg = this.add.graphics();
+        sg.lineStyle(1, 0xc8a050, 0.55);
+        sg.lineBetween(cx - 130, 146, cx + 130, 146);
+        this.add.text(cx, 158, t('menu.select_map'), {
+          fontSize: '11px', fontFamily: 'Arial', fontStyle: 'bold', color: '#7a5020',
+        }).setOrigin(0.5);
+
+        // Map buttons — stacked vertically
+        MAPS.forEach((m, i) => {
+          woodBtn(cx, 188 + i * 42, 240, 34, t(m.nameKey), '14px', () => {
+            this.scene.start('GameScene', { map: m });
+          });
+        });
+
+        // Lang toggle (top-right) — styled to match
+        const langBtn = this.add.text(W - 14, 14,
+          `[${getCurrentLang().toUpperCase()}]`,
+          { fontSize: '14px', fontFamily: 'Arial', fontStyle: 'bold',
+            color: '#c8a050', stroke: '#3a1f08', strokeThickness: 3 }
+        ).setOrigin(1, 0).setInteractive({ useHandCursor: true });
+        langBtn.on('pointerdown', () => {
+          setLanguage(getCurrentLang() === 'es' ? 'en' : 'es');
+          this.scene.restart();
+        });
+      }
+    }
+
+    class UIScene extends Phaser.Scene {
+      constructor() { super({ key: 'UIScene', active: true }); }
+
+      create() {
+        const btn = this.add.text(10, 8, '⛶', {
+          fontSize: '22px', fontFamily: 'Arial', color: '#aabbcc',
+          stroke: '#000000', strokeThickness: 3,
+        }).setInteractive({ useHandCursor: true }).setDepth(200).setScrollFactor(0);
+
+        btn.on('pointerdown', () => {
+          if (this.scale.isFullscreen) this.scale.stopFullscreen();
+          else this.scale.startFullscreen();
+        });
+        btn.on('pointerover', () => btn.setColor('#ffffff'));
+        btn.on('pointerout',  () => btn.setColor('#aabbcc'));
+
+        this.scale.on('enterfullscreen', () => btn.setVisible(false));
+        this.scale.on('leavefullscreen', () => btn.setVisible(true));
+      }
+    }
+
+    // Boot Phaser
+    const game = new Phaser.Game({
+      type: Phaser.AUTO,
+      scale: {
+        mode: Phaser.Scale.FIT,
+        autoCenter: Phaser.Scale.CENTER_BOTH,
+        width: 800,
+        height: 600,
+      },
+      backgroundColor: '#0a0a1a',
+      scene: [MenuScene, GameScene, UIScene],
+      input: { activePointers: 3 },
+    });
+
+    // Expose game instance for lang-change events
+    window._phaserGame = game;
+  </script>
+</body>
+</html>

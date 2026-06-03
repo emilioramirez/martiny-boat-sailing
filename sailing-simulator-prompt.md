@@ -46,7 +46,7 @@ There is no score or time pressure by default. It is a sandbox learning tool wit
 | Heading | Top-left | Current bow heading in degrees (0–360°) |
 | Sail trim status | On the Mainsheet Controller widget | Text label integrated into the rope controller (see Section 3) |
 | Rudder angle | On the Helm Controller widget | Shown on the mini-boat silhouette beside the helm wheel (see Section 3) |
-| Objective | Bottom-left | Current map objective text (resolved via i18n key) |
+| Objective | Bottom-center | Current map objective text resolved via `t(map.objectiveKey)`. Font 11px, word-wrapped to 500px, centered origin `(0.5, 1)`. |
 | Notification panel | Top-center | Contextual tips and coaching messages; toggleable; see Section 14 |
 | Off-screen objective arrow | Screen edge | Small arrow on the nearest screen edge pointing toward the next buoy when it is outside the viewport; disappears when the buoy is visible |
 | Mini-map | Configurable corner | Small world overview showing boat, buoys, islands; toggleable from the Indicators Panel |
@@ -74,7 +74,7 @@ The mainsheet controller is a **rope widget** that visually represents the tensi
 - The boom on the world boat sprite rotates in real time to match the current trim state.
 - The total interactive drag range maps linearly to sail trim angle 0°–85°.
 
-**Text label** displayed directly below or beside the rope widget, updated every frame via `t()`:
+**Text label** displayed directly below or beside the rope widget, updated every frame via `t('trim.' + trimStatus)` — note the `'trim.'` prefix is prepended by the widget, not by the physics module (which returns raw keys like `'luffing'`, `'trimmed'`):
 
 | Trim state | i18n key | ES | EN |
 |---|---|---|---|
@@ -147,8 +147,8 @@ This is the core of the game. Implement as a standalone module/class (`SailingPh
 
 | AWA range | Point of sail | Optimal trim | Speed factor |
 |---|---|---|---|
-| 0–40° | **In irons / no-go zone** | — | 0.0 (no thrust) |
-| 40–60° | **Close-hauled** (ceñida) | 10° | 0.70 |
+| 0–15° | **In irons / no-go zone** | — | 0.0 (no thrust) |
+| 15–60° | **Close-hauled** (ceñida) | 10° | 0.70 |
 | 60–90° | **Close reach** | 25° | 0.85 |
 | 90–120° | **Beam reach** (través) | 45° | 1.00 |
 | 120–150° | **Broad reach** | 68° | 0.95 |
@@ -167,9 +167,9 @@ boatSpeed = lerp(boatSpeed, targetSpeed, ACCEL * delta);  // frame-rate independ
 
 ### No-go zone behavior
 
-- If AWA < 40°, `pointFactor = 0`. The boat decelerates due to drag (e.g. multiply speed by 0.97 per frame).
+- If AWA < `NO_GO_ZONE_DEG` (15°), `pointFactor = 0`. The boat decelerates due to drag: multiply speed by `Math.pow(BOAT_DRAG, 60 * delta)` each frame (BOAT_DRAG = 0.999 → ~94%/s retained — very gentle, allowing time to escape).
 - The sail luffs visually: boom flaps slightly, trim label shows `trim.luffing`.
-- The boat does NOT stop instantly — it coasts to a halt.
+- The boat does NOT stop instantly — it coasts slowly to a halt, retaining enough speed for the rudder to work.
 
 ### Leeway (lateral drift)
 
@@ -187,26 +187,58 @@ When AWA crosses 180° (stern passes through the wind), the boom swings to the o
 
 Stuck in irons occurs when the boat enters the no-go zone too slowly to complete a tack and sits bow-to-wind, barely moving, with near-useless steering. One of the most important situations a beginner must learn to avoid and escape.
 
-**Entry condition**: AWA < 30° AND boatSpeed < 1.0 kts, persisting for > 2 seconds continuously.
+**Entry condition**: AWA < `NO_GO_ZONE_DEG × 2` (30° when zone is 15°) AND boatSpeed < 1.0 kts, persisting for > 2 seconds continuously.
 
 **Effects while in irons**:
 - Rudder effectiveness drops to 20% of normal (no water flow over rudder = poor steering).
 - Boom hangs slack at centreline. Sail luffs fully.
 - Boat continues to decelerate passively under drag.
 
-**Escape**: ease the mainsheet fully and apply maximum rudder to one side — this backs the sail and pushes the bow off the wind. Once AWA > 40° and boatSpeed > 0.5 kts, normal sailing resumes. A 3-second cooldown prevents immediately re-entering irons.
+**Escape**: ease the mainsheet fully and apply maximum rudder to one side — this backs the sail and pushes the bow off the wind. Once AWA > `NO_GO_ZONE_DEG` and boatSpeed > 0.5 kts, normal sailing resumes. A 3-second cooldown prevents immediately re-entering irons.
 
 **Physics output**: `SailingPhysics` returns `isInIrons: boolean` using the 2-second persistence condition (not just instantaneous AWA < 30°).
 
 **Visual**: label `t('irons.label')` appears near the boat in red. The no-go zone arc pulses slowly while in this state.
 
-### Island and boundary collision
+### Collision failure system
 
-**Island collision**:
-- Each frame, check `boatPosition` against all island polygons.
-- On intersection: find nearest point on the island boundary. Push the boat to just outside that point (offset by half hull width). Apply `boatSpeed *= 0.15`.
-- Only the perpendicular velocity component is cancelled — tangential sliding along the edge is allowed.
-- Visual: boat hull flashes red for 0.3 s on contact.
+Any collision with a buoy, island, or dock at speed triggers an immediate **mission failure**. The game pauses and a failure panel appears over the scene.
+
+**Failure conditions** (checked every frame in `update()`, only when `!isFailed && !completionShown`):
+
+| Collision type | Condition | i18n reason key |
+|---|---|---|
+| **Buoy** | Distance from boat center to any not-yet-rounded buoy center < `BOAT_HULL_WIDTH/2 + 14` (~23px) | `fail.hit_buoy` |
+| **Island** | Boat center inside any island polygon (ray-casting `_pointInPolygon`) | `fail.hit_island` |
+| **Dock crash** | Boat inside dock bounding rect AND speed > `DOCK_SUCCESS_SPEED × 2` (>2 kts) | `fail.hit_dock` |
+
+Island polygons are precomputed in `create()` as `this._islandPolygons` (array of `{x,y}` point arrays) from `map.islands[].points`.
+
+**`_triggerFailure(type)`**:
+- Sets `isFailed = true`, `isPaused = true`
+- Disables `inputManager.enabled`, hides `pauseBtn` and any open `pausePanel`
+- Sets `_failReasonTxt` to `t(reasonKey)` and `_failObjectiveTxt` to objective reminder
+- Shows `brokenGraphics` overlay on the boat container
+- Shows `failurePanel` container
+- Calls `navigator.vibrate([60, 30, 60])`
+
+**Failure panel** (`_buildFailurePanel()`):
+- Phaser Container, depth 62, centered on screen, `setVisible(false)` initially
+- Dim overlay: `fillStyle(0x000000, 0.36)` — semi-transparent so the boat wreck is visible behind
+- Panel bg: `fillStyle(0x1a0000, 0.48)`, red border `0xcc2222`, rounded rect 420×260px
+- Title: `t('fail.title')` in red `#ff4444`, 26px bold
+- Reason text: specific collision message, `#ffaaaa`, 15px, word-wrapped
+- Objective reminder: `t('fail.objective_was') + ': ' + t(map.objectiveKey)`, `#aaccdd`, 12px
+- Single button: `t('fail.restart')` → calls `_restartMap()`
+- Added to `uiGroup` so it renders through the UI camera
+
+**Broken boat overlay** (`brokenGraphics`):
+- Graphics object drawn once in `_buildBoat()`, added to boat container (rotates with the hull)
+- Red hull overlay (`#cc2222`, alpha 0.75) same polygon as main hull
+- Three white crack lines across the hull
+- `setVisible(false)` initially; shown by `_triggerFailure()`, hidden by `_restartMap()`
+
+**`_restartMap()` additions**: resets `isFailed = false`, `failurePanel.setVisible(false)`, `brokenGraphics.setVisible(false)`.
 
 **World boundary**:
 - Boat position is clamped to the `worldSize` rectangle — it cannot leave the map.
@@ -258,6 +290,7 @@ This means after a tack, a heavy boat takes noticeably longer to rebuild speed �
   isInIrons: boolean,
   justTacked: boolean,
   justJibed: boolean,
+  targetSpeed: number,   // max achievable speed given current wind, point of sail, trim
 }
 ```
 
@@ -296,12 +329,14 @@ Maps are pure data objects in a `MAPS` array. The game scene reads the selected 
 ### Buoy rounding detection
 
 A buoy is "rounded" when:
-1. The boat comes within `BUOY_DETECTION_RADIUS` (30px) of the buoy centre — entering the detection circle.
-2. The boat then exits the detection circle (distance > 30px again).
+1. The boat comes within `BUOY_DETECTION_RADIUS` (84px = 6 × buoy visual radius) of the buoy centre — entering the detection circle.
+2. The boat then exits the detection circle again.
+
+The detection zone is visualised as a **dashed circle** drawn around each pending buoy: 10 alternating segments (every other one skipped), warm gold `#ffcc66`, alpha pulsing between 0.25 and 0.85 at 1.4 s period (Sine.easeInOut). The dashed circle disappears when the buoy is rounded.
 
 Buoys must be rounded **in numeric order** (buoy #1 before #2, etc.). The `ObjectiveTracker` keeps a `nextBuoyIndex` counter that increments on each valid rounding. After all buoys are rounded, the boat must enter the `startZone` to complete the objective.
 
-On rounding: buoy flashes bright yellow for 0.5 s; a short "ping" sound plays; a brief text `t('objective.buoy_rounded')` appears near the buoy and fades out over 1 second.
+On rounding: buoy flashes bright yellow for 0.5 s; the dashed detection circle hides; the buoy turns grey (alpha 0.4); a brief text `t('objective.buoy_rounded')` floats up 35 px and fades over 1 s. A ping sound plays and the device vibrates 25 ms (mobile).
 
 ### Map 1 — Single Buoy
 
@@ -348,6 +383,17 @@ A settings panel accessible from the main menu and from the in-game pause menu.
 | Show notifications | Toggle | On / Off | On |
 | Language | Button group | `ES` / `EN` | `ES` (Spanish) |
 | Map | Button group | All map IDs | Map 1 |
+
+The settings panel uses two tabs: **Game** (`settings.tab_game`) and **Sound** (`settings.tab_sound`). The Game tab contains all settings above. The Sound tab contains volume controls for each audio category:
+
+| Volume setting | i18n key | Default |
+|---|---|---|
+| Master volume | `settings.vol_master` | 75% |
+| Water ambience | `settings.vol_water` | 100% |
+| Sail / garruchos | `settings.vol_luff` | 100% |
+| Effects (tack, jibe, ping, collision, completion) | `settings.vol_effects` | 100% |
+
+Each volume row uses `< X% >` buttons (5% per step, range 0%–150%). Values persist to localStorage under key `sailsim_audio`.
 
 When **wind variability** is on, wind direction oscillates ±10° over ~20-second cycles using a sine wave with slight random noise.
 
@@ -430,15 +476,15 @@ Every asset's visual properties are engine-agnostic; the drawing technique belon
 |---|---|---|---|
 | **Boat hull** | Elongated pointed polygon, ~60×18px. Bow is the narrow pointed end. | Cream/white fill, dark grey outline | Rotates with boat heading |
 | **Mast** | Filled circle, ~5px radius | Dark grey | Fixed at hull center |
-| **Boom** | Line from mast, ~28px long | Dark grey | Rotates with sail trim angle; always to the downwind side |
-| **Sail** | Filled triangle: mast tip → boom tip → mast base | Semi-transparent white, alpha 0.6 | Follows boom; flaps slightly when luffing |
-| **Wake trail (V-wake)** | Two diverging arms from the stern forming a V-shape. Each arm is built from the last ~1.5 s of boat positions, offset laterally from the path. The offset at each stored point grows with age and speed: `offset = (age / 1.5) × maxSpread × (boatSpeed / 15)`. At full speed (~15 kts) the spread reaches ~35 px to each side at the tail. Below 0.5 kts no wake is drawn. | White / very light blue. Alpha at each point: `1 - (age / 1.5)` — fully opaque at stern, transparent at tail. | Length is naturally speed-dependent: fast boat = positions spread far apart = long wide V. Slow boat = positions close together = short narrow trace. Gives immediate visual sense of speed. |
-| **Buoy** | Circle, ~14px radius | Orange fill, white stroke | Number label centered in bold; pulses slightly on rounding |
+| **Boom** | Line from mast, ~28px long | Dark grey | Points aft along the centerline when trim=0°; sweeps toward the leeward side as trim increases. AWA > 0 (port tack) → boom to starboard; AWA < 0 (starboard tack) → boom to port. |
+| **Sail** | 4-vertex polygon: mast (0,0) → sail head (always ~3px toward bow — 15% of full mast height — so head stays near mast in all states) → belly point (midpoint of leech offset toward leeward) → boom clew. Belly depth = `BL × 0.5 × sin(trimAngle)`. trim=0° → flat sail; trim=85° → maximum belly. **Luffing**: head oscillates laterally (flutter) with amplitude ±4px at 18-cycle rate; sail alpha drops to 0.28. **Easing/eased**: gentle flutter ±1.5px. | Semi-transparent white, alpha 0.55 (0.28 when luffing) | Belly grows as sail is eased, shrinks as trimmed in. Flutter animation communicates luffing state clearly. Head remains near mast in all states — this is the permanent visual design choice. |
+| **Wake trail (V-wake)** | Two diverging arms from the stern forming a V-shape. Each arm is built from the last ~1.5 s of boat positions, offset laterally from the path. The offset at each stored point grows with age and speed: `offset = (age / 1.5) × maxSpread × (boatSpeed / 15)`. At full speed (~15 kts) the spread reaches ~35 px to each side at the tail. Below 0.5 kts no wake is drawn. Each stored point must record the boat heading at that moment. The perpendicular direction (sideways offset) is `(cos heading, sin heading)` in screen coords — **not** `(-sin, cos)`, which pushes points along the direction of travel instead of sideways. | White / very light blue. Alpha at each point: `1 - (age / 1.5)` — fully opaque at stern, transparent at tail. | Length is naturally speed-dependent: fast boat = positions spread far apart = long wide V. Slow boat = positions close together = short narrow trace. Gives immediate visual sense of speed. |
+| **Buoy** | Circle, ~14px radius. Detection zone: dashed circle at 84px radius (6×), gold `#ffcc66`, alpha-pulsing. | Orange fill, white stroke (pending); grey fill on rounding | Number label centered in bold; detection circle disappears and buoy greys out on rounding |
 | **Island** | Irregular closed polygon | Sandy/tan at edges, green interior (two-layer polygon) | Static world object |
 | **Dock** | Rectangle with alternating light/dark stripes | Tan/brown; target zone in dashed green | Static; target zone highlights when boat is close |
 | **Water background** | Fills entire world. Base layer: solid fill. Over it: a layer of short animated dashes drifting in the wind direction, density and intensity driven by wind speed (see wind-reactive water table below). | Base: dark navy blue. Dash color: light blue/white at varying alpha. Stronger wind makes the water subtly darker. | Dashes tile seamlessly and wrap at world edges. Wind speed changes re-parameterize the animation in real time. |
 | **Wind arrows (water)** | Small chevron arrows tiled across the water | Low opacity (0.2), white/light blue | Point in wind direction; update only when wind changes |
-| **No-go zone arc** | Semi-transparent arc at the bow, ±40° spread | Red, alpha 0.3 | Rotates with boat; togglable |
+| **No-go zone arc** | Semi-transparent arc at the bow, ±`NO_GO_ZONE_DEG` spread (±15° = 30° total) | Red, alpha 0.3 | Rotates with boat; togglable |
 | **Mainsheet Controller rope** ⚑ | Two SVG states: **taut** (tall ~100×6px straight rope, visible braid cross-hatch pattern) and **eased** (short ~30×18px with 3 sine-wave undulations). The engine lerps between them using `opacity` or `scaleY`/`scaleX` tweens on two overlapping SVG elements, or by morphing SVG path `d` attributes. Cleat handle is a separate small circle element at the bottom. Background panel: rounded rect, dark, alpha 0.5. | Rope: warm brown/tan `#8B6343`. Braid marks: dark `#5C3D1E`. Panel: `#1a1a2e`, alpha 0.5. | Cleat handle drags to control trim. The morph between taut/eased states should feel fluid and continuous, not a swap between two states. |
 | **Helm Controller wheel** ⚑ | One SVG: circular wheel (~80px diameter) with 6 spokes and a circular grab handle on the rim, plus an adjacent top-down boat silhouette (~50×16px) with a short rudder line at the stern. The entire wheel SVG rotates as a unit. The rudder line within the silhouette sub-element rotates independently. Background panel: same as rope controller. | Wheel rim and spokes: dark wood `#3D2B1F`. Grab handle: gold `#C9A84C`. Silhouette: cream `#F5F0E0`. Rudder line: dark `#333`. Panel: same as rope. | The SVG root element rotates with helm angle. The rudder sub-element counter-rotates by `helmAngle × 0.5` to show rudder deflection on the mini-boat. PORT/STBD text labels are HTML elements outside the SVG, positioned flanking the panel. |
 
@@ -446,19 +492,19 @@ Every asset's visual properties are engine-agnostic; the drawing technique belon
 | **Wind vector arrow** | Arrow from boat center, direction = where wind comes FROM. Length proportional to wind speed (8px per knot, max 120px). Arrowhead at tip. Small speed label beside arrow tip. | Sky blue / light blue. | Rotates with live wind direction; length scales with wind speed. Togglable. |
 | **Heading vector (crujía)** | Line from hull center forward along boat heading angle. Fixed length ~80px. Arrowhead at tip. | Bright white / cyan. | Rotates with boat heading. Togglable. |
 | **Velocity vector** | Arrow from hull center in actual movement direction (heading + leeway). Length proportional to boat speed (10px per knot). Arrowhead at tip. | Bright green. | May diverge from heading vector when leeway is present — the gap between the two is educationally significant. Togglable. |
-| **Inertia / Displacement indicator** | Small floating panel near the boat: two stacked horizontal bars — "Target" (dashed, white) and "Current" (solid, green). Bars represent speed. Gap between them shows how much inertia is delaying the response. Text label below: displacement value and class name. | Panel: dark semi-transparent. Bars: green (current) and white dashed (target). Label text: dim white. | Bars update every frame. Gap closes as boat accelerates/decelerates toward target. Togglable. |
+| **Inertia indicator** | Small semi-transparent panel near the boat (world space, +36px right, -50px up). Label: "current / target kts". Single bar: dark track = 100% (target), colored fill = current/target ratio. Green fill when current < target (accelerating); amber fill when current > target (coasting on inertia). All alpha ~50% so the world shows through. | Panel bg: `0x0a1628` alpha 0.42. Track: `0x1a2e44` alpha 0.50. Fill: green `0x44ff88` or amber `0xffaa22`, alpha 0.45. | Redrawn every frame on worldGroup overlayGfx. `targetSpeed` comes from `SailingPhysics.update()` return. Togglable (default ON). |
 | **Indicators button** | Small square icon button in the HUD corner. Shows a vector/eye icon. | Semi-transparent dark background, white icon. | Opens/closes the IndicatorsPanel floating window. |
 | **Start/finish zone** | Two small cylindrical posts (port = red cylinder, starboard = green cylinder, ~12px diameter × 20px tall) with a dashed white line between them spanning the zone width. | Port post: red. Starboard post: green. Dashed line: white, alpha 0.7. | Static world object. When the boat passes through the line after rounding all buoys, the zone flashes briefly and the completion banner fires. |
-| **Buoy rounding flash** | The buoy's fill colour rapidly transitions to bright yellow and back to orange over 0.5 s (single flash). A brief `t('objective.buoy_rounded')` text fades in at the buoy position and rises slightly over 1 s. | Flash: bright yellow → orange. Text: white, fades to transparent. | Triggered once per rounding event. Does not re-trigger if the boat circles the buoy again. |
+| **Buoy rounding flash** | Yellow overlay circle (r=16px) fades from alpha 1→0 over 0.5 s via tween, then buoy redraws grey. `t('objective.buoy_rounded')` text rises 35px and fades over 1 s. Detection zone circle is hidden. | Flash: bright yellow. Text: `#ffff44`. Buoy after: grey fill, grey stroke 0.5 alpha. | Triggered once per rounding; buoy stays grey on restart until `_rebuildBuoyVisuals()` is called. |
 | **Stuck-in-irons overlay** | Text label `t('irons.label')` rendered in bold red above the boat in world space. The no-go zone arc strokes slowly between full opacity and 40% opacity (pulse rate ~1 Hz). | Label: red. Arc pulse: red, 0.4–1.0 alpha. | Appears and pulses while `isInIrons` is true; disappears immediately on escape. |
 | **World edge vignette** | Dark gradient overlay on the screen edge closest to the world boundary. Width: ~100px. | Very dark navy/black, alpha up to 0.4. | Fades in as boat approaches within 150px of world edge; fades out as boat moves away. |
 | **Wind shift cue** | The wind direction arrow in the HUD briefly scales up to 1.3× and pulses once when the wind direction changes by more than 5° (only when wind variability is ON). | Arrow: same sky blue as normal, brief bright flash. | Single pulse animation, ~0.4 s duration. Does not repeat until the next shift event. |
 | **Tutorial coach mark** | Full-screen dim overlay (alpha 0.6) with a "cut-out" hole revealing the highlighted element. Rounded tooltip box with text and a "Continue" / "Skip" button. | Overlay: dark, alpha 0.6. Tooltip: dark background, white text, rounded corners. Cutout: transparent circle or rounded rect matching the highlighted element. | Input blocked on everything except the Continue/Skip buttons. |
 | **Point-of-sail label** | Short text rendered near the boat in world space, just above the no-go zone arc. Shows current point of sail name. Color-coded by category. | Close-hauled: blue. Reach: green. Running: orange. In irons: red. | Toggleable learning aid. Updates continuously as AWA changes. |
 | **Sail trim glow — good** | A warm golden halo around the sail, triggered when trim status transitions into `trimmed`. Fades in over 0.2 s and out over 0.8 s (one-shot, not looping). | Warm gold / amber, alpha peaks at 0.5. Applied as additive blend or outer glow on the sail shape. | Fires once per transition into trimmed state. Reinforces correct trimming as a positive reward. |
-| **Sail trim glow — luffing** | A cool blue-white shimmer on the sail while `trimStatus === 'luffing'`. Implemented as a rapid opacity oscillation (5–8 Hz) on a blue-tinted overlay of the sail shape. | Icy blue-white, alpha oscillates 0.0–0.35. | Active continuously while luffing; stops immediately when AWA > 40°. Reinforces the negative state without being distracting. |
-| **Off-screen objective arrow** | A small filled triangle (arrow) ~18px, positioned on the screen edge in the direction of the next buoy. Shown only when the buoy is outside the visible viewport. Rotates to always point at the buoy. | Orange, matching buoy color. Alpha 0.85. | Updates every frame. Disappears when the buoy enters the viewport. Shows distance label in small text beside it (e.g. "340 m"). |
-| **Mini-map** | Small ~120×120px overlay in a configurable corner. Shows: world boundary as a thin rectangle, islands as dark filled polygons (scaled), all buoys as 4px dots (grey = done, orange = pending, bright = next), boat as a 5px bright dot with a tiny heading arrow, start zone as a short line. No dock or text labels. Background: dark semi-transparent rounded rect. | Islands: dark grey. Buoys: grey/orange. Boat: bright white. Start zone: dashed white line. | Updates every frame. Corner is configurable (same 3×2 grid as controllers). Toggleable from Indicators Panel. |
+| **Sail trim glow — luffing** | A cool blue-white shimmer on the sail while `trimStatus === 'luffing'`. Implemented as a rapid opacity oscillation (5–8 Hz) on a blue-tinted overlay of the sail shape. | Icy blue-white, alpha oscillates 0.0–0.35. | Active continuously while luffing; stops immediately when AWA > `NO_GO_ZONE_DEG` (15°). Reinforces the negative state without being distracting. |
+| **Objective arrow** | Filled triangle drawn in world space, 105px from the boat centre, pointing toward the next objective (next buoy → start zone → dock). Tip-to-base 20px long, 16px wide base. Bounces ±5% of 105px (≈5px) along the direction vector at ~6 cycles/s to suggest movement. Alpha pulses 0.55–0.90 at ~4 cycles/s. Hidden when `objectiveTracker.complete` is true or distance to target < 20px. | Cyan `0x44eeff` fill + white outline alpha 0.6. | Drawn every frame via `_updateObjectiveArrow(time)` on a dedicated world-layer Graphics. Automatically switches target as buoys are rounded. |
+| **Mini-map** | 120×120px overlay fixed at center-left (`x=10`, `y = scale.height/2 - 60`). Islands: dark green filled polygons. Buoys: dots (grey = rounded, orange = pending, bright orange = next). Dock: small tan rect. Boat: 3px white dot + 7px heading arrow. Start zone: short white line. Background: dark semi-transparent rounded rect, depth 22, in uiGroup. | Islands: `0x2a4a2a`. Buoys: grey/orange/bright. Boat: white. Start zone: white alpha 0.7. | Redrawn every frame on mmGfx (uiGroup). Toggleable from Indicators Panel (default ON). |
 | **Notification panel** | Pill-shaped banner, ~280px wide × ~40px tall, at top-center of screen. Left border color indicates priority. Text centered. Fades in (0.3 s), stays, fades out (0.3 s). Max 1 visible at a time; queue of up to 3. | Urgent: red border. Warning: yellow. Success: green. Info: blue-grey. Background: dark semi-transparent. | Togglable from Settings. See Notification & Coaching System section for full message catalog. |
 
 ### Wind-reactive water — parameter tiers
@@ -545,8 +591,9 @@ Game
 │
 ├── ObjectiveTracker       Checks completion conditions for the active map
 │     nextBuoyIndex        which buoy must be rounded next
-│     update(boatState, map) → { buoyRounded: bool, complete: bool }
-│     reset()              called by Restart action in PauseScene
+│     init(map)            called on scene create
+│     update(boatPos, boatSpeed, boatHeading) → { buoyRounded, roundedBuoyIndex, complete, docked }
+│     reset()              called by Restart — resets nextBuoyIndex + wasInDetection
 │
 ├── TutorialManager        First-run coach mark sequence
 │     start()   next()   skip()   isComplete() → bool
@@ -720,6 +767,20 @@ const TRANSLATIONS = {
     // Notifications settings
     'settings.notifications':  'Mostrar notificaciones',
 
+    // Settings panel tabs
+    'settings.tab_game':       'Juego',
+    'settings.tab_sound':      'Sonido',
+
+    // Volume controls
+    'settings.vol_master':     'Volumen general',
+    'settings.vol_water':      'Agua',
+    'settings.vol_luff':       'Vela (garruchos)',
+    'settings.vol_effects':    'Efectos',
+
+    // Layout panel row labels
+    'layout.helm_row':         'Timón',
+    'layout.ms_row':           'Escota',
+
     // Stuck in irons
     'irons.label':             'EN HIERROS',
 
@@ -737,6 +798,14 @@ const TRANSLATIONS = {
     // Objective / buoy events
     'objective.buoy_rounded':  '¡Boya!',
     'objective.return_start':  'Regresá a la largada',
+
+    // Failure
+    'fail.title':              'MISIÓN FALLIDA',
+    'fail.restart':            'Reiniciar misión',
+    'fail.hit_buoy':           'Chocaste con una boya',
+    'fail.hit_island':         'Encallaste en una isla',
+    'fail.hit_dock':           'Llegaste al muelle demasiado rápido',
+    'fail.objective_was':      'Objetivo',
 
     // Tutorial
     'tutorial.wind':           'Esta flecha muestra de dónde viene el viento.',
@@ -862,6 +931,20 @@ const TRANSLATIONS = {
     // Notifications settings
     'settings.notifications':  'Show notifications',
 
+    // Settings panel tabs
+    'settings.tab_game':       'Game',
+    'settings.tab_sound':      'Sound',
+
+    // Volume controls
+    'settings.vol_master':     'Master volume',
+    'settings.vol_water':      'Water',
+    'settings.vol_luff':       'Sail (hanks)',
+    'settings.vol_effects':    'Effects',
+
+    // Layout panel row labels
+    'layout.helm_row':         'Helm',
+    'layout.ms_row':           'Sail',
+
     // Stuck in irons
     'irons.label':             'IN IRONS',
 
@@ -879,6 +962,14 @@ const TRANSLATIONS = {
     // Objective / buoy events
     'objective.buoy_rounded':  'Buoy!',
     'objective.return_start':  'Return to start',
+
+    // Failure
+    'fail.title':              'MISSION FAILED',
+    'fail.restart':            'Restart mission',
+    'fail.hit_buoy':           'You crashed into a buoy',
+    'fail.hit_island':         'You ran aground on an island',
+    'fail.hit_dock':           'You crashed into the dock too fast',
+    'fail.objective_was':      'Objective',
 
     // Tutorial
     'tutorial.wind':           'This arrow shows where the wind is coming from.',
@@ -925,7 +1016,7 @@ Visual overlays to help beginners understand what's happening. All togglable via
 
 | Aid | i18n key | What it shows |
 |---|---|---|
-| **No-go zone arc** | `aid.no_go` | Red arc in front of the bow, ±40° — the range where sailing is impossible |
+| **No-go zone arc** | `aid.no_go` | Red arc in front of the bow, ±`NO_GO_ZONE_DEG` (±15° = 30° total) — the range where sailing is impossible |
 | **Sail trim guide** | `aid.trim_guide` | Ghost boom line showing the *optimal* trim angle for the current AWA (dashed) |
 | **Wind arrows on water** | — | Low-opacity directional arrows across the water background |
 | **AWA readout** | `aid.awa_label` | Small number near the boat showing current Apparent Wind Angle in degrees |
@@ -945,67 +1036,66 @@ A button in the HUD (vector/eye icon, label from `t('indicators.button_label')`)
 ┌─────────────────────────────────┐
 │  Indicadores Visuales        ✕  │
 ├─────────────────────────────────┤
-│  🔵  Vector de viento      [ON] │
+│  🔵  Vector de viento     [OFF] │
 │  ⬜  Dirección de crujía  [OFF] │
-│  🟢  Vector de velocidad  [OFF] │
-│  🟡  Inercia del barco    [OFF] │
-│  🗺  Minimapa             [OFF] │
+│  🟢  Vector de velocidad   [ON] │
+│  🟡  Inercia del barco     [ON] │
+│  🗺  Minimapa              [ON] │
 └─────────────────────────────────┘
 ```
 
-- Each row: colored icon matching the indicator's color, label (from `t()`), toggle switch.
-- Panel position: fixed to a corner of the screen (does not scroll with the world). Suggested default: top-right, below the wind HUD element.
-- Panel background: semi-transparent dark, rounded corners, same visual language as the controller widgets.
+- Each row: colored dot matching the indicator's color, label (from `t()`), ON/OFF toggle text button.
+- **Toggle button** (`t('indicators.button_label')`): positioned at center-right of screen (`x = scale.width - 10`, `y = scale.height / 2`), origin `(1, 0.5)`. Opens/closes the panel.
+- **Panel position**: right side of screen, vertically centered (`x = scale.width - PW - 8`, `y = scale.height / 2 - PH / 2`). Does not scroll with the world. Depth 30.
+- Panel background: semi-transparent dark (`0x0c1624`, alpha 0.96), rounded corners, thin blue border.
 
 ### Indicators
 
-#### 1. Wind Vector (`indicators.wind_vector`) — default ON
+#### 1. Wind Vector (`indicators.wind_vector`) — default OFF
 
 - **What it shows**: where the wind is coming FROM, and how strong it is.
-- **Visual**: arrow drawn from the boat center. Direction points into the wind source. Length scales with wind speed: `length = windSpeed * 8px` (capped at 120px). Arrowhead at the tip. Speed label beside the tip (e.g. "12 kts").
-- **Color**: sky blue.
+- **Visual**: arrow drawn from the boat center in world space. Direction points toward the wind source (`rad = DegToRad(windDir - 90)`). Length scales with wind speed: `length = windSpeed * 8px` (capped at 120px). Arrowhead at the tip.
+- **Color**: sky blue `0x99ccff`.
 - **Updates**: every frame (rotates with live wind; length changes if speed changes).
 
 #### 2. Heading Vector / Crujía (`indicators.heading`) — default OFF
 
 - **What it shows**: the exact direction the boat's bow (keel line) is pointing.
-- **Visual**: line from the hull center forward along the heading angle. Fixed length ~80px. Arrowhead at the bow end.
-- **Color**: bright white / cyan.
+- **Visual**: arrow from the hull center forward along boat heading. Fixed length 80px. Arrowhead at tip.
+- **Color**: white `0xffffff`.
 - **Educational value**: when leeway is present, this line diverges from the velocity vector — the player can see the boat is slipping sideways relative to where the bow points.
 
-#### 3. Velocity Vector (`indicators.velocity`) — default OFF
+#### 3. Velocity Vector (`indicators.velocity`) — default ON
 
-- **What it shows**: the boat's actual direction and speed of movement over water (heading + leeway drift combined).
-- **Visual**: arrow from the hull center. Direction = actual movement direction. Length proportional to boat speed: `length = boatSpeed * 10px` (capped at 100px). Arrowhead at tip. Speed value label beside tip (e.g. "5.2 kts").
-- **Color**: bright green.
-- **Educational value**: when both heading and velocity vectors are enabled simultaneously, the player can clearly see the **leeway angle** — the gap between the two arrows caused by the boat being pushed sideways by wind and water resistance.
+- **What it shows**: the boat's actual direction of movement (heading + leeway drift). Derived from the position delta each frame (`Math.atan2(dy, dx)` converted to heading convention).
+- **Visual**: arrow from the hull center. Direction = actual movement direction. Length = `boatSpeed * 10px` (capped at 100px). Arrowhead at tip.
+- **Color**: bright green `0x44ff88`.
+- **Educational value**: when both heading and velocity vectors are enabled simultaneously, the leeway angle gap between the two arrows is clearly visible.
 
-#### 4. Inertia / Displacement Indicator (`indicators.inertia`) — default OFF
+#### 4. Inertia Indicator (`indicators.inertia`) — default ON
 
-- **What it shows**: how the boat's weight (displacement) is affecting its response to changes — the gap between where the boat IS in speed and where it is TRYING to get to.
-- **Visual**: a small floating panel anchored near the boat (world space, moves with boat):
+- **What it shows**: how quickly the boat is reaching its maximum possible speed for the current conditions (wind, point of sail, trim).
+- **Visual**: small semi-transparent panel anchored near the boat in world space (offset `+36px` right, `-50px` up from boat center):
   ```
-  ┌──────────────────────┐
-  │  Desplazamiento: 2 t │  ← configured displacement + class name
-  │  Obj  ╌╌╌╌╌╌╌╌╌╌╌╌╌ │  ← target speed (dashed bar, white)
-  │  Act  ████████░░░░░  │  ← current speed (solid bar, green)
-  └──────────────────────┘
+  ┌──────────────────────────────┐
+  │  4.2 / 8.0 kts               │  ← "current / target kts"
+  │  ████████████░░░░░░░░░░░░░░  │  ← single bar, fill = current/target %
+  └──────────────────────────────┘
   ```
-  - **Top line**: displacement value and class (`t('indicators.disp_medium')`, "2.0 t").
-  - **"Obj" bar** (target speed): dashed, white — where the boat speed is heading given current trim and conditions.
-  - **"Act" bar** (actual speed): solid green — current speed right now.
-  - The gap between the two bars is the visual representation of inertia. Right after a tack, the gap is large and closes slowly — for a heavy boat, this is very visible.
-  - Bar width: 80px total, each unit = maxSpeed/80 px.
-- **Color**: panel dark translucent; "Obj" bar white dashed; "Act" bar green.
-- **Updates**: every frame.
+  - **Label**: `"current / target kts"` — actual speed / maximum achievable speed.
+  - **Bar track** (dark): represents 100% = target speed.
+  - **Bar fill** (color): `current / target` ratio × bar width.
+    - **Green** `0x44ff88`: current < target — boat is still accelerating.
+    - **Amber** `0xffaa22`: current > target — boat is decelerating from inertia (e.g. after entering a slower point of sail or the no-go zone).
+  - All alphas at ~50%: panel bg `0.42`, track `0.50`, fill `0.45`.
+- **Updates**: every frame. `targetSpeed` is exposed by `SailingPhysics.update()` return value.
 
-#### 5. Mini-map (`indicators.minimap`) — default OFF
+#### 5. Mini-map (`indicators.minimap`) — default ON
 
-- **What it shows**: a scaled-down top view of the entire world — boat position, heading, buoys, and island outlines — so the player can orient themselves without scrolling.
-- **Visual**: 120×120px overlay in a configurable corner. Dark semi-transparent background. Islands as dark filled polygons. Buoys as 4px dots (grey = already rounded, orange = pending, bright orange = next target). Boat as a 5px white dot with a tiny 8px heading arrow. Start zone as a short dashed white line.
-- **Scale**: `worldSize → 120px` (e.g., 3000px world = 1:25 scale). Scale factor computed on map load.
-- **Corner position**: configurable via the same 3×2 grid in Controller Layout settings. Default: top-left. Stored in `sailsim_layout` alongside controller positions.
-- **Updates**: redrawn every frame (fast — only a few dozen primitives at 1:25 scale).
+- **What it shows**: a scaled-down top view of the entire world so the player can orient themselves without scrolling.
+- **Visual**: 120×120px overlay, **center-left** of screen (`x=10`, `y = scale.height/2 - 60`). Dark semi-transparent background. Islands as dark filled polygons. Buoys as dots (grey = rounded, orange = pending, bright = next target). Dock as small tan rect. Boat as a 3px white dot with a 7px heading arrow. Start zone as a short white line.
+- **Scale**: `scl = 120 / worldSize.width` (e.g. 3000px world → 1:25).
+- **Updates**: redrawn every frame via `mmGfx` (UI camera layer, depth 22).
 
 ### Indicator state persistence
 
@@ -1036,7 +1126,7 @@ These fire in response to specific game events. Each key has a cooldown to avoid
 |---|---|---|---|---|
 | `notif.trim_close` | `trimError < 10°` and not yet `trimmed`, sustained 2 s | `info` | 3 s | 15 s |
 | `notif.trim_perfect` | Transition into `trimmed` status | `success` | 2 s | 10 s |
-| `notif.luffing_tip` | AWA < 40° for first time in session | `info` | 4 s | 60 s |
+| `notif.luffing_tip` | AWA < `NO_GO_ZONE_DEG` for first time in session | `info` | 4 s | 60 s |
 | `notif.irons_tip` | `isInIrons` for > 3 s | `urgent` | 5 s | 20 s |
 | `notif.tack_success` | `justTacked` event | `success` | 1.5 s | 5 s |
 | `notif.jibe_success` | `justJibed` event | `success` | 1.5 s | 5 s |
@@ -1072,17 +1162,34 @@ Notification state (current message, queue, tip index, cooldowns) is not persist
 
 ## 14. Audio
 
-All sounds should be synthesized procedurally or embedded inline — no external audio files.
+All sounds are synthesized procedurally using the **Web Audio API** — no external audio files.
+
+### Sound catalog
 
 | Sound | Trigger | Character |
 |---|---|---|
-| Water ambience | Always | Low looping ocean background |
-| Sail luff | AWA < 40° | Flapping fabric sound, intensity proportional to speed |
-| Sail fill | On transition `luffing/stalled → trimmed` | Soft "whomp" of canvas filling with wind — one-shot, not looping |
-| Tack / jibe | On `justTacked` or `justJibed` event | Short whoosh |
-| Buoy rounded | On `buoyRounded` event | Short bright ping |
-| Island collision | On grounding | Dull thud |
-| Dock success / objective complete | On `complete` event | Pleasant chime |
+| Water ambience | Continuous while sailing; gain proportional to `boatSpeed` | Two-layer filtered noise: LPF 90 Hz (hull rumble) + BPF 380 Hz (water burble). Each layer modulated by three sine LFOs at irrational-ratio frequencies (e.g. 0.37/0.61/1.19 Hz) so the pattern never repeats |
+| Sail luff / garruchos | `trimStatus === 'luffing'` | Discrete scheduled metallic transients simulating garruchos (sail slides) rattling on the mast track. Three overlapping BPF noise bursts per flap (1800/3200/5000 Hz), fast attack + exponential decay. Flap rate proportional to how deep in the no-go zone × wind speed (`flapFactor = windFactor × (0.5 + depthFactor)`, range 0.25–1.4) |
+| Tack | On `justTacked` | Short bandpass noise burst (1100 Hz) + descending sine tone (300→110 Hz) |
+| Jibe | On `justJibed` | Lower bandpass noise burst (550 Hz) + deeper sine tone (160→45 Hz) |
+| Buoy ping | On `buoyRounded` | Two sine partials (880 Hz + 1320 Hz), slow decay ~1.2 s |
+| Collision | On `_triggerFailure` | Low sine thud (95→22 Hz) + lowpass noise burst (280 Hz) |
+| Objective complete | On `_showCompletion` | Ascending C5–E5–G5 chord sequence (523/659/784 Hz), ~1.5 s total |
+
+### Pause and resume
+
+Audio is suspended when the game pauses and resumed when it unpauses:
+
+| Event | Audio action |
+|---|---|
+| Game paused (`_togglePause`, failure panel shown) | `audio.suspend()` — stops all AudioContext processing |
+| Game resumed (`_togglePause`, `_restartMap`) | `audio.resume()` — AudioContext continues from where it left off |
+| Completion banner shown | `playCompletion()` then `suspend()` after 1.8 s (allows the chime to finish) |
+| Failure | `playCollision()` then `suspend()` after 0.6 s |
+
+### Autoplay policy
+
+`AudioContext` is **not created on construction**. `SailingAudio` is instantiated early in `create()` so panels can call `getVol()` (which reads localStorage only). The AudioContext is created on the **first user gesture** (`pointerdown` or `keydown`). This satisfies browser autoplay policies without deferring the volume UI.
 
 ---
 
@@ -1092,7 +1199,7 @@ All sounds should be synthesized procedurally or embedded inline — no external
 > below** with the equivalent for your engine (e.g. "Implementation: Godot 4",
 > "Implementation: Unity WebGL") and leave Part 1 completely unchanged.
 >
-> Current target: **Single HTML file, Phaser (verify current stable version at phaser.io)**.
+> Current target: **Multi-file web app using Phaser (verify current stable version at phaser.io)**, loaded by a single `index.html`. Files are generated and tested independently; concatenated into one file for release if needed.
 
 ---
 
@@ -1100,19 +1207,945 @@ All sounds should be synthesized procedurally or embedded inline — no external
 
 | Decision | Choice | Reason |
 |---|---|---|
-| Delivery | Single `index.html` file | Self-contained, no build step |
-| Game library | **Phaser** (latest stable — verify at phaser.io) loaded via CDN | Mature, canvas/WebGL, scene management, input, camera |
-| Physics | Custom `SailingPhysics` class (see Section 4) | Sailing math is domain-specific; do NOT use Phaser Arcade Physics or Matter.js |
+| Delivery | `index.html` loads multiple `.js` files in order | Each file is generated and tested independently; concatenated for release if needed |
+| Game library | **Phaser** (latest stable — verify at phaser.io) via CDN | Scene management, WebGL, input, tweens, time, cameras |
+| Physics | Custom `SailingPhysics` class (see Section 4) | Sailing math is domain-specific; **do NOT use Phaser Arcade Physics or Matter.js** |
 | Rendering | Phaser WebGL (Canvas fallback) | Phaser default |
-| World assets | Programmatically drawn via Phaser Graphics API | Simple geometry — no external files needed |
-| Controller widgets | Inline SVG embedded in the HTML + loaded as Phaser textures via base64 | Rope morph and wheel detail require SVG quality; avoids external files |
-| Scaling | `Phaser.Scale.FIT`, base 800×600 | Works on all screen sizes |
-| Touch input | Phaser built-in pointer events | Unified mouse + touch |
-| Persistence | `localStorage` | Controller positions, language preference |
+| World assets | `Phaser.GameObjects.Graphics` (programmatic drawing) | Simple geometry, no external files |
+| Controller widgets | SVG template literals in their `.js` files → base64 → `this.textures.addBase64()` | Rope morph and wheel detail require SVG quality; avoids external files |
+| All game UI | **100% Phaser GameObjects** — zero HTML DOM for any panel, button, or overlay | HTML DOM over canvas causes unresolvable pointer-event conflicts; see Rule 1 in Section 16 |
+| Scaling | `Phaser.Scale.FIT` + `autoCenter: Phaser.Scale.CENTER_BOTH`, base 800×600 | Works on all screen sizes |
+| Touch | Phaser pointer events; multi-touch via `input: { activePointers: 3 }` in game config | Must explicitly declare pointer count or Phaser only tracks 1 |
+| Audio | Standalone `window.AudioContext` created on first user gesture in `SailingAudio.start()` | Procedural synthesis; no external files; completely independent of Phaser's sound system |
+| Persistence | `localStorage` | Controller positions, language, indicator states |
 
 ---
 
-## 14. Rendering & Assets — Phaser Implementation
+## 14. File Structure & Load Order
+
+```
+project/
+├── index.html                  ← loads Phaser CDN + all JS files; creates Phaser.Game
+├── constants.js                ← CONSTANTS object
+├── translations.js             ← TRANSLATIONS + t() + setLanguage()
+├── maps.js                     ← MAPS array
+├── sailing-physics.js          ← SailingPhysics class — NO Phaser dependency
+├── audio.js                    ← AudioManager (Web Audio synthesis)
+├── input-manager.js            ← InputManager (Phaser pointer events → rudderAxis, sailTrimTarget)
+├── mainsheet-controller.js     ← MainsheetController (Phaser Container widget)
+├── helm-controller.js          ← HelmController (Phaser Container widget + wheel math)
+├── layout-manager.js           ← LayoutManager (localStorage)
+├── objective-tracker.js        ← ObjectiveTracker
+├── notification-system.js      ← NotificationSystem
+├── tutorial-manager.js         ← TutorialManager
+├── indicators-panel.js         ← IndicatorsPanel + MiniMap
+├── menu-scene.js               ← MenuScene  (Phaser.Scene)
+├── game-scene.js               ← GameScene  (Phaser.Scene)
+└── pause-scene.js              ← PauseScene (Phaser.Scene)
+```
+
+`index.html` structure — the only HTML needed:
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0a0a1a; overflow: hidden; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+  <!-- Verify and use the current stable Phaser CDN URL from phaser.io -->
+  <script src="https://cdn.phaser.io/releases/x.x.x/phaser.min.js"></script>
+  <!-- Load in dependency order -->
+  <script src="constants.js"></script>
+  <script src="translations.js"></script>
+  <script src="maps.js"></script>
+  <script src="sailing-physics.js"></script>
+  <script src="audio.js"></script>
+  <script src="input-manager.js"></script>
+  <script src="mainsheet-controller.js"></script>
+  <script src="helm-controller.js"></script>
+  <script src="layout-manager.js"></script>
+  <script src="objective-tracker.js"></script>
+  <script src="notification-system.js"></script>
+  <script src="tutorial-manager.js"></script>
+  <script src="indicators-panel.js"></script>
+  <script src="menu-scene.js"></script>
+  <script src="game-scene.js"></script>
+  <script src="pause-scene.js"></script>
+  <script>
+    new Phaser.Game({
+      type: Phaser.AUTO,
+      scale: {
+        mode: Phaser.Scale.FIT,
+        autoCenter: Phaser.Scale.CENTER_BOTH,
+        width: 800,
+        height: 600,
+      },
+      backgroundColor: '#0a0a1a',
+      scene: [MenuScene, GameScene, PauseScene],
+      input: { activePointers: 3 },  // REQUIRED for multi-touch
+    });
+  </script>
+</body>
+</html>
+```
+
+Each `.js` file is independently readable and testable. `sailing-physics.js` has zero Phaser dependency and can be verified in a browser console before the game scene exists. Controller files can be loaded in a minimal Phaser harness before the full game is built.
+
+---
+
+## 15. Build Phases
+
+Build and verify strictly in order. **Do not proceed to the next phase until all checks pass.**
+
+### Phase 1 — World Foundation
+
+**Files**: `constants.js`, `translations.js`, `maps.js`, `game-scene.js` (skeleton only), `index.html`
+
+**Deliverable**: Boat visible on screen. Arrow keys move the boat (direct heading/speed, no physics yet). Camera follows the boat. Water background renders. World boundary clamps the camera.
+
+**Verification**:
+- [ ] Canvas fills the full viewport with no white border or scroll bars
+- [ ] Boat shape is visible and rotates with heading
+- [ ] Arrow keys move the boat; camera follows smoothly
+- [ ] Camera does not scroll past world edges in any direction
+
+---
+
+### Phase 2 — Sailing Physics
+
+**File**: `sailing-physics.js`
+
+**Deliverable**: `SailingPhysics` class, `update()` method. **Zero Phaser dependency** — testable in any browser console.
+
+**Verification** (paste into browser console after loading the file):
+```js
+const p = new SailingPhysics();
+const base = { boatHeading: 90, boatSpeed: 0, windDirection: 0, windSpeed: 12,
+               sailTrimAngle: 45, rudderAngle: 0, displacement: 2.0,
+               delta: 0.016, boatPosition: {x:0, y:0} };
+
+const beam = p.update(base);
+console.assert(beam.AWA === 90, 'AWA should be 90 on beam reach');
+console.assert(beam.boatSpeed > 0, 'boat should accelerate on beam reach');
+
+const irons = p.update({ ...base, boatHeading: 0, boatSpeed: 5 });
+console.assert(irons.boatSpeed < 5, 'boat should decelerate in no-go zone');
+
+// Tack detection: bring AWA from just-positive to just-negative
+const preTack = p.update({ ...base, boatHeading: 2, boatSpeed: 5 });
+const postTack = p.update({ ...base, boatHeading: 358, boatSpeed: 5 });
+console.assert(postTack.justTacked === true, 'justTacked must fire on wind crossing');
+```
+- [ ] Beam reach accelerates; no-go zone decelerates
+- [ ] `justTacked` fires exactly once when heading crosses through the wind
+- [ ] `trimStatus` returns correct value for each AWA range
+
+---
+
+### Phase 3 — Controls
+
+**Files**: `input-manager.js`, `mainsheet-controller.js`, `helm-controller.js`
+
+**Deliverable**: Both widgets rendered. Helm wheel responds to circular drag. Mainsheet morphs between taut and eased. Both operable simultaneously with two fingers.
+
+**Verification**:
+- [ ] Dragging the wheel **clockwise** increases helm angle; counter-clockwise decreases it (not inverted, not linear)
+- [ ] Releasing the wheel, it springs back toward center gradually
+- [ ] Mainsheet handle drag changes trim smoothly from fully eased to fully trimmed
+- [ ] Two simultaneous touches on separate controllers do not interfere with each other
+- [ ] No jitter when the drag angle crosses the 0°/360° wrap
+
+---
+
+### Phase 4 — HUD & Settings Panel
+
+**Files**: HUD elements in `game-scene.js`, settings panel (as overlay scene or container), `layout-manager.js`
+
+**Deliverable**: HUD shows speed, heading, wind. Settings panel opens, all controls respond, panel closes. **Every element is a Phaser GameObject — zero HTML**.
+
+**Verification**:
+- [ ] Settings panel opens on button tap and closes on the close button
+- [ ] All sliders, toggles, and button groups in the panel respond to pointer input
+- [ ] HUD values (speed, heading, wind) update every frame while sailing
+- [ ] No pointer conflict: tapping a panel button works even directly above the canvas
+
+---
+
+### Phase 5 — Maps & Objectives
+
+**Files**: `objective-tracker.js`, full `game-scene.js`
+
+**Deliverable**: All 4 maps load from the map selector. Buoys round in order. Map 4 docking works. Completion banner fires.
+
+**Verification**:
+- [ ] Switching maps in settings reloads the world correctly with no leftover objects
+- [ ] Buoy ordering is enforced — rounding #2 before #1 has no effect
+- [ ] Docking at wrong speed or heading shows no completion
+- [ ] Correct docking fires the completion banner
+- [ ] Restarting resets boat position, objective tracker, and wake trail
+
+---
+
+### Phase 6 — Polish
+
+**Files**: `audio.js`, `notification-system.js`, `tutorial-manager.js`, `indicators-panel.js`
+
+**Deliverable**: Sound on events, notification pill, tutorial coach marks, indicators panel with all 5 toggles, V-wake, wind-reactive water dashes.
+
+**Verification**:
+- [ ] Sound plays on tack, jibe, buoy rounded — zero console errors
+- [ ] Water ambience scales with boat speed (silent at rest, audible at 3+ kts)
+- [ ] Sail luff sound (metallic garrucho transients) fires when in no-go zone; rate increases deeper in zone and with stronger wind
+- [ ] Audio suspends when game pauses and resumes when game resumes
+- [ ] Sound tab in settings panel shows four volume controls; adjusting master changes overall volume immediately
+- [ ] Volume values persist across page reloads
+- [ ] Tutorial fires on first launch; Skip works from step 1; Settings replay works
+- [ ] Indicators panel opens/closes without pausing the game; each toggle shows/hides its overlay
+- [ ] V-wake absent below 0.5 kts; clear wide V at 8+ kts
+- [ ] Water dashes visibly change tier when wind speed crosses 10 kts and 18 kts thresholds
+
+---
+
+## 16. Phaser Best Practices — Critical Rules
+
+These are **hard rules**. Violating them causes bugs that are difficult to diagnose because they don't throw errors — they silently produce wrong behavior.
+
+---
+
+### RULE 1 — Zero HTML DOM for game UI
+
+Every button, panel, text label, toggle, slider, overlay, and widget must be a Phaser GameObject. Never create `<div>`, `<button>`, or any HTML element for in-game UI.
+
+```js
+// WRONG — HTML element over canvas receives no pointer events
+const btn = document.createElement('button');
+btn.textContent = 'Cerrar';
+document.body.appendChild(btn);
+
+// CORRECT — Phaser Text with interactive hit area
+const closeBtn = this.add.text(x, y, t('settings.close'), style)
+  .setInteractive({ useHandCursor: true })
+  .on('pointerdown', () => panel.setVisible(false));
+```
+
+**Why**: The Phaser canvas captures all pointer events at the browser level. HTML elements rendered on top of it receive no mouse or touch input. This is the root cause of "buttons that don't respond" and "settings panel that can't be closed."
+
+Use **Phaser Containers** to group related elements into reusable panels:
+
+```js
+// Settings panel as a Phaser Container — all parts move and show/hide together
+function createSettingsPanel(scene) {
+  const container = scene.add.container(240, 80);
+
+  const bg = scene.add.graphics()
+    .fillStyle(0x1a1a2e, 0.92)
+    .fillRoundedRect(0, 0, 320, 460, 12);
+
+  const title = scene.add.text(16, 16, t('settings.title'), STYLE.panelTitle);
+
+  const closeBtn = scene.add.text(290, 16, '✕', STYLE.closeBtn)
+    .setInteractive({ useHandCursor: true })
+    .on('pointerdown', () => container.setVisible(false));
+
+  container.add([bg, title, closeBtn]);
+  container.setScrollFactor(0);   // stays fixed on screen
+  container.setVisible(false);
+  return container;
+}
+```
+
+---
+
+### RULE 2 — Multi-touch requires explicit declaration
+
+Phaser tracks exactly 1 pointer by default. A second touch cancels the first — both controllers cannot be used simultaneously without this.
+
+```js
+// In Phaser.Game config (index.html):
+input: { activePointers: 3 }
+```
+
+In `InputManager`, each controller claims its own pointer ID:
+
+```js
+this.mainsheetPointerId = null;
+this.helmPointerId      = null;
+
+this.input.on('pointerdown', (pointer) => {
+  if (mainsheetZone.contains(pointer.x, pointer.y) && this.mainsheetPointerId === null)
+    this.mainsheetPointerId = pointer.id;
+  else if (helmZone.contains(pointer.x, pointer.y) && this.helmPointerId === null)
+    this.helmPointerId = pointer.id;
+});
+
+this.input.on('pointermove', (pointer) => {
+  if (pointer.id === this.mainsheetPointerId) this._updateMainsheet(pointer);
+  if (pointer.id === this.helmPointerId)      this._updateHelm(pointer);
+});
+
+this.input.on('pointerup', (pointer) => {
+  if (pointer.id === this.mainsheetPointerId) this.mainsheetPointerId = null;
+  if (pointer.id === this.helmPointerId)      this.helmPointerId      = null;
+});
+```
+
+---
+
+### RULE 3 — Helm wheel uses angular delta, not linear delta
+
+Mapping `pointer.deltaX` to rudder angle produces tiller behavior, not wheel behavior — the rudder turns the same direction the pointer moves laterally, instead of rotating with the wheel.
+
+The correct approach is to compute the angle of the pointer **around the wheel center** and measure how that angle changes between frames:
+
+```js
+// HelmController — called from pointermove only when helmPointerId matches
+_updateHelm(pointer) {
+  const dx = pointer.x - this.wheelCenterX;
+  const dy = pointer.y - this.wheelCenterY;
+  const currentAngle = Math.atan2(dy, dx);
+
+  if (this.prevPointerAngle === null) {
+    // First move after pointerdown — initialize without applying delta
+    this.prevPointerAngle = currentAngle;
+    return;
+  }
+
+  let delta = currentAngle - this.prevPointerAngle;
+  // Normalize to [-PI, PI] to handle the 0/2PI crossing without a jump
+  if (delta >  Math.PI) delta -= 2 * Math.PI;
+  if (delta < -Math.PI) delta += 2 * Math.PI;
+
+  this.helmAngle = Phaser.Math.Clamp(
+    this.helmAngle + Phaser.Math.RadToDeg(delta),
+    -90, 90
+  );
+  this.prevPointerAngle = currentAngle;
+}
+
+// Reset prevPointerAngle on pointerup so next drag starts clean
+onPointerUp() {
+  this.prevPointerAngle = null;
+}
+```
+
+---
+
+### RULE 4 — Use a dedicated UI camera, not `setScrollFactor(0)` on individual objects
+
+Setting `setScrollFactor(0)` on dozens of HUD objects individually creates maintenance burden and subtle rendering order bugs. Instead, use a dedicated UI camera that never scrolls:
+
+```js
+// GameScene.create()
+
+// Main camera: follows the boat in world space
+this.cameras.main.startFollow(this.boatContainer, true, 0.08, 0.08);
+this.cameras.main.setBounds(0, 0, map.worldSize.width, map.worldSize.height);
+
+// UI camera: fixed, sees only UI objects
+this.uiCamera = this.cameras.add(0, 0, this.scale.width, this.scale.height);
+this.uiCamera.ignore(this.worldGroup);    // don't render world through UI camera
+this.cameras.main.ignore(this.uiGroup);  // don't render UI through main camera
+
+// Add objects to the right group at creation time:
+this.worldGroup.add(waterGraphics);
+this.worldGroup.add(boatContainer);
+this.uiGroup.add(hudContainer);
+this.uiGroup.add(helmWidget);
+this.uiGroup.add(mainsheetWidget);
+```
+
+---
+
+### RULE 5 — Never use `setTimeout` / `setInterval` / `requestAnimationFrame`
+
+These calls survive scene changes and cause ghost callbacks when scenes are restarted. Use Phaser's time system:
+
+```js
+// WRONG
+setTimeout(() => this.buoyFlash(), 500);
+
+// CORRECT
+this.time.delayedCall(500, () => this.buoyFlash(), [], this);
+
+// Repeating events:
+this.time.addEvent({
+  delay: 200,
+  callback: this.tickNotifications,
+  callbackScope: this,
+  loop: true,
+});
+```
+
+---
+
+### RULE 6 — Never use `document.addEventListener` for game input
+
+Document-level listeners fire even when the scene is paused, stopped, or destroyed.
+
+```js
+// WRONG
+document.addEventListener('keydown', handler);
+
+// CORRECT — keyboard
+this.cursors = this.input.keyboard.createCursorKeys();
+// Then in update(): if (this.cursors.left.isDown) { ... }
+
+// CORRECT — named key
+this.input.keyboard.on('keydown-SPACE', handler, this);
+```
+
+---
+
+### RULE 7 — Use Tweens for visual animations; do not lerp visual properties in `update()`
+
+Physics state values (`boatSpeed`, `helmAngle`, `sailTrimTarget`) must still be updated in `update()` — that's correct. But visual-only properties (alpha, scale, position of UI elements) should use Tweens so they are self-managing and frame-rate independent:
+
+```js
+// WRONG — manual lerp in update() every frame for a one-shot visual effect
+this.buoy.alpha = lerp(this.buoy.alpha, 1, 0.1 * delta);
+
+// CORRECT — Tween, fired once, cleans up itself
+this.tweens.add({
+  targets: buoy,
+  fillColor: { from: 0xFFFF00, to: 0xFF6600 }, // yellow flash → orange
+  duration: 500,
+  ease: 'Sine.easeOut',
+});
+
+// Looping pulse (no-go zone arc while in irons):
+this.tweens.add({
+  targets: noGoArc,
+  alpha: { from: 1.0, to: 0.4 },
+  duration: 500,
+  yoyo: true,
+  repeat: -1,
+});
+```
+
+---
+
+### RULE 8 — Scene launch and transition patterns
+
+```js
+// Overlay (PauseScene over GameScene — GameScene stays rendered):
+this.scene.launch('PauseScene', { parentKey: 'GameScene' });
+this.scene.pause('GameScene');
+
+// Return from overlay:
+this.scene.resume('GameScene');
+this.scene.stop('PauseScene');
+
+// Full transition (replaces current scene):
+this.scene.start('GameScene', { map: selectedMap });
+
+// Cross-scene reference from an overlay:
+const gameScene = this.scene.get('GameScene');
+gameScene.restartMap();
+```
+
+---
+
+### RULE 9 — Suppress browser default touch gestures on the canvas
+
+Without this, pinch-zoom and page scroll activate on mobile, hijacking the drag controls.
+
+```js
+// In GameScene.create():
+this.game.canvas.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
+this.game.canvas.addEventListener('touchmove',  (e) => e.preventDefault(), { passive: false });
+
+// Also suppress right-click context menu on desktop:
+this.input.mouse.disableContextMenu();
+```
+
+And in `index.html` `<head>`:
+```html
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+```
+
+---
+
+### RULE 10 — Clean up listeners in scene shutdown
+
+```js
+// In every scene that sets up listeners:
+this.events.on('shutdown', () => {
+  this.input.off('pointerdown');
+  this.input.off('pointermove');
+  this.input.off('pointerup');
+  this.input.keyboard.off('keydown-SPACE');
+  if (this.audioManager) this.audioManager.stopAll();
+}, this);
+```
+
+---
+
+### Additional Phaser patterns
+
+**Containers for interactive panels** — group a background graphic, labels, and buttons so they move, show, hide, and depth-sort as a unit:
+
+```js
+const panel = this.add.container(x, y);
+const bg    = this.add.graphics().fillStyle(0x1a1a2e, 0.9).fillRoundedRect(0, 0, w, h, 10);
+const label = this.add.text(12, 12, t('key'), STYLE.body);
+panel.add([bg, label]);
+panel.setScrollFactor(0);
+panel.setDepth(10);
+```
+
+**Viewport-aware drawing for water effects and wind arrows** (do NOT use a world-sized RenderTexture):
+
+A `RenderTexture` spanning the full `worldSize` (e.g. 3000×3000) can exceed WebGL max texture limits and silently render only a fraction of its content. Instead, draw water dashes and wind arrows each frame using a regular `Graphics` object, computing only the cells visible within the current camera viewport:
+
+```js
+// Each frame in update():
+_drawWaterEffects(time) {
+  const cam   = this.cameras.main;
+  const vx    = cam.scrollX,  vy = cam.scrollY;
+  const vw    = cam.width  / (cam.zoom || 1);
+  const vh    = cam.height / (cam.zoom || 1);
+  const margin = spacing * 2;
+
+  // Snap grid origin to world coords — pattern stays stable as camera moves
+  const gx0 = Math.floor((vx - margin) / spacing) * spacing;
+  const gy0 = Math.floor((vy - margin) / spacing) * spacing;
+
+  g.clear();
+  for (let gx = gx0; gx < vx + vw + margin; gx += spacing) {
+    for (let gy = gy0; gy < vy + vh + margin; gy += spacing) {
+      // draw dash or arrow at (gx, gy) in world space
+    }
+  }
+}
+```
+
+Animate drift with a time-based offset modulo spacing so dashes scroll smoothly:
+```js
+const driftDist = (time * 0.001 * driftSpeed * windSpeed) % spacing;
+const driftX = Math.cos(windRad) * driftDist;
+const driftY = Math.sin(windRad) * driftDist;
+```
+
+**Pointer hit areas for controller widgets must be at least 48×48px:**
+
+```js
+// Use a named hitArea geometry, not the default bounding box
+wheelImage.setInteractive(
+  new Phaser.Geom.Circle(0, 0, 50),   // 100px diameter — generous touch target
+  Phaser.Geom.Circle.Contains
+);
+```
+
+**Resume AudioContext on first user interaction** (browsers suspend audio until a gesture):
+
+```js
+this.input.once('pointerdown', () => {
+  if (this.sound.context.state === 'suspended')
+    this.sound.context.resume();
+}, this);
+```
+
+---
+
+## 17. Audio — Web Audio Synthesis (`SailingAudio`)
+
+Use the **Web Audio API** directly — **do not use Phaser's sound system or create Phaser sound objects**. A standalone `window.AudioContext` is created manually on the first user gesture. No second AudioContext is needed since Phaser's sound system is not used for game audio.
+
+### Signal chain
+
+```
+noise buffer (2s, looped)
+  ├── LPF 90 Hz → AM gain ← multiLFO([0.37, 0.61, 1.19] Hz)  } waterGain → catWaterGain
+  └── BPF 380 Hz → AM gain ← multiLFO([1.43, 2.31, 3.67] Hz) }
+
+luffGain (fades in/out 0→1 each frame)
+  └── _flapBurst nodes (scheduled transients) → catLuffGain
+
+one-shot nodes → catEffectsGain
+
+catWaterGain ─┐
+catLuffGain  ─┼→ masterGain → destination
+catEffectsGain┘
+```
+
+### `SailingAudio` class interface
+
+```js
+class SailingAudio {
+  constructor()          // reads volume defaults from localStorage — safe before AudioContext
+  start()                // creates AudioContext on first user gesture; idempotent
+  suspend()              // pauses AudioContext (game pause / failure / completion)
+  resume()               // resumes AudioContext (game resume / restart)
+
+  update({ boatSpeed, trimStatus, windSpeed, absAWA })
+    // Called every frame:
+    // - waterGain.value = max(0, boatSpeed - 0.3) * 0.009
+    // - luffGain fades to 1.0 if trimStatus === 'luffing', else fades to 0
+    // - while luffing: schedules _flapBurst transients with 120ms lookahead
+    //   flapRate = flapFactor / 0.10s where flapFactor ∈ [0.25, 1.4]
+    //   flapFactor = windFactor × (0.5 + depthFactor)
+    //   depthFactor = max(0, 1 − absAWA / NO_GO_ZONE_DEG)  → 1 at head-to-wind, 0 at edge
+    //   windFactor  = min(windSpeed, 25) / 15
+
+  playTack()             // bandpass noise (1100 Hz) + sine tone (300→110 Hz, 0.24 s)
+  playJibe()             // bandpass noise (550 Hz) + sine tone (160→45 Hz, 0.35 s)
+  playBuoyPing()         // two sine partials: 880 Hz + 1320 Hz, slow decay ~1.3 s
+  playCollision()        // low sine thud (95→22 Hz) + lowpass noise (280 Hz)
+  playCompletion()       // ascending C5–E5–G5 (523/659/784 Hz), three notes × 0.14 s apart
+
+  setVol(cat, pct)       // cat: 'master' | 'water' | 'luff' | 'effects'; pct 0–1.5
+  getVol(cat) → number   // reads _volDefaults — works before AudioContext is created
+}
+```
+
+### Volume persistence
+
+Volumes are stored in `localStorage` under `sailsim_audio` as `{ master, water, luff, effects }` (all floats 0–1.5). Defaults: `master=0.75`, others=`1.0`. `_loadVolumeDefaults()` is called in the constructor so `getVol()` returns correct values before the AudioContext is created — this allows the Sound settings tab to display accurate percentages immediately.
+
+### Luff transient scheduling
+
+Each "flap" is three overlapping `BufferSourceNode` bursts through bandpass filters:
+
+```
+_flapBurst(when, vol*0.6, 1800 Hz, Q=2.5, attack=4ms, decay=55ms) // slide knock
+_flapBurst(when+3ms, vol*1.0, 3200 Hz, Q=3.5, attack=2ms, decay=35ms) // metallic ring
+_flapBurst(when+1ms, vol*0.7, 5000 Hz, Q=2.8, attack=1ms, decay=18ms) // high click
+```
+
+The lookahead window is 120ms. If `_nextFlapTime` falls behind `currentTime`, it resets to `currentTime`. Jitter is 55–145% of the base interval to prevent audible periodicity.
+
+### Aperiodic modulation via irrational LFO ratios
+
+Water layers use LFOs at frequencies whose pairwise ratios are irrational (e.g. 0.37/0.61 ≈ 0.607, not reducible to a simple fraction). This means the combined LFO pattern never repeats — the result sounds organic rather than mechanical.
+
+### create() ordering constraint
+
+`new SailingAudio()` must be called **before** `_buildPausePanel()` (or any panel that calls `audio.getVol()`). The constructor is safe to call at any time — it only reads localStorage. AudioContext creation is deferred to `start()`.
+
+```js
+// Correct order in GameScene.create():
+this.audio = new SailingAudio();
+this.input.once('pointerdown', () => this.audio.start(), this);
+this.input.keyboard.once('keydown', () => this.audio.start(), this);
+this._buildHUD();
+this._buildPausePanel(); // safe — audio exists, getVol() works
+```
+
+---
+
+## 18. Rendering & Assets — Phaser Implementation
+
+World assets use **`Phaser.GameObjects.Graphics`**. Controller widgets use **SVG → base64 textures** via `this.textures.addBase64()`. Never attempt to replicate the rope morph or the wheel spokes with the Graphics API.
+
+### World assets — Phaser Graphics API
+
+All Graphics objects belong to named groups (see Rule 4). Each dynamic object clears and redraws each frame on its own Graphics instance — do **not** share a single Graphics object between multiple world elements.
+
+| Asset | Phaser drawing approach |
+|---|---|
+| **Boat hull** | `graphics.fillStyle(...).fillPoints(polygon, true)` — pointed vertex array |
+| **Mast** | `graphics.fillCircle(x, y, 5)` |
+| **Boom** | Separate `Graphics` child of the boat Container. Redrawn every frame via `_updateBoom(trimAngle, signedAWA)` — **never use `setAngle()`**. Boom tip in container space (bow=−Y, stern=+Y): `boomSide = AWA ≥ 0 ? 1 : −1` (port tack → starboard); `boomTipX = boomSide × BL × sin(trimRad)`; `boomTipY = BL × cos(trimRad)`. |
+| **Sail** | Redrawn in `_updateBoom(trimAngle, signedAWA, trimStatus)`. `g.fillPoints([mast, head, bellyPoint, clew], true)`. Head vertex always at `headY = sailHeadY * 0.15` (stays near mast in all states — permanent visual design choice). Belly point = midpoint of leech offset toward leeward by `BL × 0.5 × sin(trimRad)`. Flutter: `headX = sin(time * 0.018) * boomSide * (luffing ? 4 : easing ? 1.5 : 0)`. Alpha 0.55 normal, 0.28 when luffing. Leeward perpendicular unit: `perpX = boomSide × boomTipY / BL`, `perpY = −boomSide × boomTipX / BL`. Boom line drawn on top. |
+| **Wake (V-wake)** | Rolling `{x, y, age, heading, speed}` array — store heading and speed at recording time. Per frame: `graphics.clear()` → for each point compute `spread = (age/1.5)*35*(speed/15)`, perpendicular direction `(cos heading, sin heading)` (NOT `-sin/cos`), draw two lines (port/stbd) with per-point alpha = `1 - age/1.5`. |
+| **Buoy** | `graphics.strokeCircle()` + `this.add.text()` label; flash via `this.tweens.add()` |
+| **Island** | `graphics.fillPoints(polygon)` with two passes: sandy outer, green inner |
+| **Dock** | `graphics.fillRect()` for stripes; dashed outline via short `lineBetween` segments |
+| **Water base** | `graphics.fillRect(0, 0, worldW, worldH)` — color component tweened with `this.tweens.addCounter()` as wind speed changes tiers |
+| **Water dashes** | Pool of `{x, y, angle, phase}` objects. Each frame: advance `x/y` by wind drift × delta; wrap at world bounds; draw each as 3–4 sine-offset points via `strokePoints`. Re-parameterize count/length/alpha on tier change by tweening pool properties in place — **never recreate the pool**. |
+| **Wind arrows** | Viewport-aware `Graphics` — draw only the cells visible in the current camera viewport each frame (see viewport-aware pattern in Section 16). Do NOT use a world-sized `RenderTexture`. |
+| **No-go zone arc** | `graphics.slice(x, y, r, startAngle, endAngle)` in red, alpha 0.3. Child of boat Container. Pulsing tween while in irons. |
+| **Vector overlays** | Dedicated overlay Graphics above the world layer. `clear()` + redraw each frame only when IndicatorsPanel is open. |
+
+### Controller widgets — SVG → base64
+
+Define SVGs as template literals in their respective `.js` files. Load into Phaser **before** GameScene starts (in a preload step or via a BootScene).
+
+```js
+// In mainsheet-controller.js — loaded in preload() of BootScene or MenuScene
+const ROPE_TAUT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 110">
+  <!-- tall thin rope with diagonal braid cross-hatch marks -->
+  <!-- cleat circle at bottom -->
+</svg>`;
+
+const ROPE_EASED_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 55">
+  <!-- short thick rope with 3 sine-wave undulations -->
+  <!-- same cleat circle at bottom -->
+</svg>`;
+
+// Convert to data URI and load as Phaser texture
+function loadRopeTextures(scene) {
+  const toURI = svg => 'data:image/svg+xml;base64,' + btoa(svg);
+  scene.textures.addBase64('rope-taut',  toURI(ROPE_TAUT_SVG));
+  scene.textures.addBase64('rope-eased', toURI(ROPE_EASED_SVG));
+}
+```
+
+At runtime: render both images at the same position in the Container. Cross-fade alpha to produce the morph:
+
+```js
+// In MainsheetController.update(trimAngle):
+const t = trimAngle / 85;  // 0 = taut, 1 = eased
+this.tautImage.setAlpha(1 - t);
+this.easedImage.setAlpha(t);
+```
+
+**Helm Controller — one SVG, rudder line drawn separately:**
+
+```js
+const HELM_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 140">
+  <!-- wheel: outer rim circle, 6 evenly-spaced spokes, grab handle on rim -->
+  <!-- mini boat silhouette below wheel (no rudder line here) -->
+</svg>`;
+```
+
+Load as a single texture. Rotate the entire `this.add.image('helm-wheel')` object for helm angle. Draw the rudder line separately each frame with a thin Graphics overlay at the silhouette's stern, rotated by `helmAngle * 0.5`.
+
+---
+
+## 19. Code Architecture — Phaser
+
+```
+index.html           loads CDN + all .js files in order (see Section 14)
+                     creates Phaser.Game with { activePointers: 3, scene: [MenuScene, GameScene, PauseScene] }
+
+constants.js         CONSTANTS — all tuning values; no dependencies
+translations.js      TRANSLATIONS + t() + setLanguage(); no dependencies
+maps.js              MAPS array; no dependencies
+sailing-physics.js   SailingPhysics — zero Phaser dependency; pure math
+
+audio.js             SailingAudio — standalone Web Audio API synthesis; no Phaser dependency
+                     Constructor reads localStorage for volume defaults (safe before AudioContext).
+                     start(): creates AudioContext on first user gesture; builds water/luff graph.
+                     update({boatSpeed, trimStatus, windSpeed, absAWA}): drives water gain + luff scheduling.
+                     suspend()/resume(): wrap AudioContext.suspend/resume for pause/resume.
+                     setVol(cat, pct)/getVol(cat): volume control + localStorage persistence ('sailsim_audio').
+                     MUST be instantiated before any panel that calls getVol() — see Section 17.
+
+input-manager.js     InputManager — registered in GameScene.create()
+                     Listens: this.scene.input.on('pointerdown/move/up')
+                     Exposes: rudderAxis [-1,+1], sailTrimTarget [0°,85°]
+
+mainsheet-controller.js
+  Phaser Container: panel bg + taut SVG image + eased SVG image + cleat handle text/graphic
+  Drag: pointermove on claimed pointer → cross-fade taut/eased alpha → write InputManager
+
+helm-controller.js
+  Phaser Container: panel bg + wheel SVG image + port/stbd Text labels
+  Drag: Math.atan2 angular delta → helmAngle (clamped ±90°) → write InputManager
+  Rudder line: Graphics drawn each frame at mini-silhouette stern, angle = helmAngle * 0.5
+
+layout-manager.js    reads/writes localStorage; called by both controllers on drag-end and on load
+objective-tracker.js
+  Pure logic — no Phaser dependency.
+  init(map): stores map reference, resets state.
+  update(boatPos, boatSpeed, boatHeading): entry+exit detection for buoys (enter circle, then leave = rounded).
+    Returns { buoyRounded, roundedBuoyIndex, complete, docked }.
+  Dock detection: boat inside dock rect + speed ≤ DOCK_SUCCESS_SPEED + heading within ±20°.
+  reset(): called by _restartMap() — zeroes nextBuoyIndex and wasInDetection.
+notification-system.js
+  Phaser Container (pill banner) at top-center of UI layer
+  update(boatState, gameState, delta) — checks triggers, manages queue, drives fade Tween
+
+tutorial-manager.js
+  Phaser Container (full-screen dim overlay + cutout highlight + tooltip Container)
+  Uses this.time.delayedCall() for step transitions, not setTimeout
+
+indicators-panel.js  (IndicatorsPanel class)
+  Constructor: receives scene, worldGroup, uiGroup, map.
+    overlayGfx: Graphics in worldGroup — vectors + inertia bar, redrawn each frame.
+    mmGfx: Graphics in uiGroup (depth 22) — mini-map, redrawn each frame.
+    _iTgtLbl, _iCurLbl: Text objects in worldGroup for inertia label.
+    panel: Container in uiGroup (depth 30, right-center) — 5 toggle rows with colored dots.
+    toggleBtn: Text in uiGroup (center-right, x=W-10, y=H/2, origin (1,0.5)) — opens/closes panel.
+  update(boatPos, heading, speed, windDir, windSpeed, targetSpeed, objectiveTracker):
+    Computes velocity direction from position delta each frame.
+    Draws active overlays on overlayGfx (clear each frame).
+    Draws mini-map on mmGfx when enabled.
+  State persisted to localStorage 'sailsim_indicators'.
+  Defaults: windVector=false, heading=false, velocity=true, inertia=true, minimap=true.
+
+menu-scene.js (MenuScene)
+  All UI: Containers, Text, Graphics — zero HTML
+  Map selector: card grid of interactive Containers
+  Settings panel: Container (hidden by default, shown on gear button tap)
+
+game-scene.js (GameScene extends Phaser.Scene)
+  preload(): load SVG textures via addBase64
+  create():
+    → this.audio = new SailingAudio()        ← FIRST: safe before AudioContext; needed by panels
+    → register audio.start() on first pointerdown / keydown
+    → build world from map data (WorldBuilder pattern)
+    → set up worldGroup + uiGroup + cameras
+    → _buildHUD(), _buildPausePanel()        ← panels can now call audio.getVol() safely
+    → instantiate InputManager, controllers, ObjectiveTracker, NotificationSystem, etc.
+  update(time, delta):
+    inputManager.flush()
+    → newState = sailingPhysics.update(boatState, delta)
+    → move boat Container (x/y/angle)
+    → redraw dynamic Graphics (wake, boom, water dashes)
+    → _updateObjectiveArrow(time)    ← world-space cyan arrow pointing to next objective
+    → hud.update(newState)
+    → obj = objectiveTracker.update(boatPos, boatSpeed, boatHeading)
+         if obj.buoyRounded → _flashBuoy(obj.roundedBuoyIndex) + audio.playBuoyPing() + vibrate(25)
+         if obj.complete    → _showCompletion()
+    → notificationSystem.update(newState, delta)
+    → audio.update({ boatSpeed, trimStatus, windSpeed, absAWA })
+    → if newState.justTacked → audio.playTack()
+    → if newState.justJibed  → audio.playJibe()
+    → indicatorsPanel.render(newState)
+    boatState = newState
+
+  _togglePause(): flips isPaused; if pausing → audio.suspend(); if resuming → audio.resume()
+
+  _buildCompletionBanner(): Phaser Container depth 60 — dim overlay + "¡Completado!" + Restart + Menu btns
+  _showCompletion(): makes banner visible; audio.playCompletion(); isPaused=true; audio.suspend() after 1.8s
+  _flashBuoy(i): yellow tween overlay → redraw grey → hide detection circle → float text
+  _rebuildBuoyVisuals(): restores all buoys to original color + shows detection circles (called by _restartMap)
+  _restartMap(): resets boat state + physics + objectiveTracker + buoy visuals + failure state; audio.resume(); returns to play state
+
+  _buildPausePanel(): two-tab container (Game tab + Sound tab)
+    Game tab: wind dir/speed, displacement, layout, language, notifications toggle
+    Sound tab: four volume rows (master/water/luff/effects) with < X% > buttons; _refreshVolRows() updates display
+    _setTab(name): shows/hides sub-containers, highlights active tab button
+    _refreshVolRows(): reads audio.getVol(cat) for each category — guarded (no-op if audio not ready)
+
+  _buildFailurePanel(): Phaser Container depth 62 — dark red panel (420×260px), dim overlay alpha 0.36 (semi-transparent
+    so wreck is visible), reason text, objective reminder, single "Reiniciar misión" button.
+    Panel bg alpha 0.48 so the scene is visible behind it.
+  _triggerFailure(type): sets isFailed=true, isPaused=true; audio.playCollision(); audio.suspend() after 0.6s; disables input; shows brokenGraphics; shows failurePanel
+  _pointInPolygon(px, py, polygon): ray-casting algorithm for island collision detection
+
+  In _buildBoat(): adds brokenGraphics (red hull overlay + 3 crack lines, setVisible(false)) to boat container
+
+  In update() — collision checks before objective tracking:
+    Buoy: dist(boat, buoy) < BOAT_HULL_WIDTH/2 + 14 for any non-rounded buoy → _triggerFailure('buoy')
+    Island: _pointInPolygon(boatPos, islandPoly) → _triggerFailure('island')
+    Dock: boat in dock bounds AND speed > DOCK_SUCCESS_SPEED*2 → _triggerFailure('dock')
+
+pause-scene.js (PauseScene extends Phaser.Scene)
+  Launched as overlay — GameScene stays rendered behind
+  Semi-transparent dim bg Graphics + menu Container
+  Confirm dialogs: lightweight Containers within PauseScene (not new scenes)
+```
+
+Data flow per frame:
+```
+InputManager → SailingPhysics.update() → boatState → render + HUD
+                                                     → collision checks (buoy/island/dock) → _triggerFailure()
+                                                     → ObjectiveTracker + _updateObjectiveArrow()
+                                                     → IndicatorsPanel + MiniMap
+                                                     → NotificationSystem.update()
+                                                     → SailingAudio.update()    ← water + luff synthesis
+                                                     → SailingAudio.playTack/playJibe on justTacked/justJibed
+```
+
+---
+
+## 20. Completion Criteria
+
+### Part 1 — Design & Logic (engine-agnostic)
+
+- [ ] All 4 maps are defined as data objects and are fully playable.
+- [ ] Sailing physics produce realistic behavior: no-go zone blocks progress, beam reach is fastest, running is slower than reaching.
+- [ ] Tacking and jibing fire correctly (boom swings, speed penalty applies, `justTacked`/`justJibed` flags fire once).
+- [ ] Mainsheet Controller rope morphs correctly: long-thin when trimmed, short-wide when eased.
+- [ ] Trim status label shows the correct i18n key for all 5 states.
+- [ ] Helm Controller wheel rotates on drag; rudder line on mini-boat silhouette moves in sync.
+- [ ] PORT/STBD labels highlight correctly when helm is deflected.
+- [ ] Both controllers can be repositioned via the 3×2 grid and via free-drag Customize Layout mode.
+- [ ] Controller positions persist to storage and are restored on reload.
+- [ ] Docking on Map 4 detects success correctly (speed + heading tolerance).
+- [ ] No-go zone arc and sail trim guide toggle correctly.
+- [ ] Visual Indicators button opens and closes the floating panel without pausing the game.
+- [ ] Wind vector arrow rotates with live wind direction and scales correctly with wind speed.
+- [ ] Heading vector (crujía) points along the bow heading and diverges from the velocity vector when leeway is present.
+- [ ] Velocity vector length is proportional to boat speed and points in the actual movement direction.
+- [ ] When both heading and velocity vectors are active simultaneously, the leeway angle gap is clearly visible.
+- [ ] Inertia indicator shows target speed bar and current speed bar; the gap is visually large after a tack and closes gradually.
+- [ ] Inertia gap closes noticeably faster with Light displacement than with Heavy displacement.
+- [ ] V-wake is not drawn below 0.5 kts. At 3+ kts it forms a clear diverging V. At 8+ kts the V is wide and prominent.
+- [ ] Wake length and width scale naturally with speed (long/wide at speed, short/narrow when slow).
+- [ ] Water dashes transition smoothly between Calm / Choppy / Rough tiers as wind speed changes.
+- [ ] At Rough tier (>18 kts), water is visually noticeably more agitated than at Calm tier (<10 kts).
+- [ ] Both controllers respond simultaneously to independent touches (multi-touch).
+- [ ] Browser default gestures (pinch-zoom, scroll) are suppressed on the canvas.
+- [ ] When the boat runs aground on an island, it slows sharply and the hull flashes red. It cannot pass through islands.
+- [ ] Tangential sliding along island edges works; only perpendicular velocity is cancelled.
+- [ ] A dark vignette appears on the screen edge when the boat is within 150px of the world boundary.
+- [ ] The boat cannot leave the world boundary rectangle.
+- [ ] Buoys must be rounded in numeric order. Rounding out-of-order has no effect.
+- [ ] Each pending buoy shows a dashed detection circle (84px, gold, pulsing). Circle hides on rounding.
+- [ ] On rounding, the buoy flashes yellow, turns grey, a brief text floats up, device vibrates 25 ms.
+- [ ] After rounding all buoys, entering the start zone triggers the completion banner.
+- [ ] Objective arrow (cyan triangle) points from boat toward next target at all times; bounces gently; disappears when complete.
+- [ ] The start zone is rendered as two coloured posts with a dashed line between them.
+- [ ] Stuck-in-irons state is entered after 2 continuous seconds of AWA < `NO_GO_ZONE_DEG × 2` (30°) and speed < 1 kts.
+- [ ] While in irons: rudder effectiveness is 20%, no-go arc pulses, label is visible.
+- [ ] Escaping irons by easing and applying helm restores normal sailing.
+- [ ] Pause menu has a Restart button that resets position, wake, and objective without exiting.
+- [ ] Tutorial coach mark sequence fires on first game launch.
+- [ ] Tutorial can be skipped from step 1 and replayed from Settings.
+- [ ] Each tutorial step correctly highlights its target element and blocks other input.
+- [ ] Point-of-sail label updates correctly across all AWA ranges and is colour-coded.
+- [ ] Wind shift cue pulses the HUD wind arrow when wind variability causes a shift > 5°.
+- [ ] In landscape orientation, controllers default to bottom corners. In portrait, they default to center-sides.
+- [ ] On screens narrower than 400px, the Indicators Panel is scrollable and controllers scale to 80%.
+- [ ] Haptic feedback fires on tack, jibe, collision, buoy rounding, and objective complete with correct patterns.
+- [ ] Restart and Back to Menu both show a confirm dialog before executing. Cancelling returns to the pause menu.
+- [ ] Sail trim glow (gold) appears on transition into trimmed state and fades out in ~0.8 s.
+- [ ] Sail luffing shimmer (blue-white) oscillates continuously while AWA < `NO_GO_ZONE_DEG` and stops immediately on exit.
+- [ ] Objective arrow (world-space, 105px from boat, cyan, bouncing) always points to next target; switches automatically as objectives are completed.
+- [ ] Mini-map toggle in Indicators Panel shows/hides the mini-map overlay. Boat, buoys, and islands are correctly scaled.
+- [ ] Mini-map buoy dots reflect rounding state (grey = done, orange = pending, bright = next).
+- [ ] Notification panel shows contextual messages with correct priority colors and durations.
+- [ ] Contextual triggers fire at the right conditions (trim_close, irons_tip, approach_dock, etc.) and respect cooldowns.
+- [ ] When no contextual message fires for 30 s, idle tips cycle through the full pool.
+- [ ] Notifications can be toggled off from Settings; no messages appear when disabled.
+- [ ] Sail fill sound plays once on transition from luffing/stalled to trimmed.
+- [ ] Indicator on/off states persist to storage and are restored on reload.
+- [ ] Boat displacement setting in World Configuration changes how quickly the boat accelerates/decelerates.
+- [ ] All user-visible strings come from `TRANSLATIONS` via `t()` — no hardcoded text anywhere.
+- [ ] The game launches in Spanish by default.
+- [ ] Switching to English refreshes all on-screen text immediately.
+- [ ] Language preference persists to storage and is restored on reload.
+- [ ] Both `'es'` and `'en'` translation blocks are complete — no missing keys.
+- [ ] Colliding with a not-yet-rounded buoy (within ~23px) triggers mission failure.
+- [ ] Colliding with an island (boat center inside polygon) triggers mission failure.
+- [ ] Entering a dock at speed > 2× DOCK_SUCCESS_SPEED triggers failure (crash), not success.
+- [ ] Failure panel shows the specific reason (`fail.hit_buoy`, `fail.hit_island`, `fail.hit_dock`) and the objective reminder.
+- [ ] Failure panel background is semi-transparent (alpha ~0.48) so the broken boat is visible behind it.
+- [ ] Broken boat overlay (red hull + crack lines) appears on the boat container when failure is triggered.
+- [ ] "Reiniciar misión" button resets all state: boat position, physics, tracker, buoy visuals, broken overlay, failure panel.
+- [ ] Objective text (bottom HUD) is centered at the bottom of the screen, not left-aligned.
+
+### Part 2 — Web / Phaser Implementation
+
+- [ ] Code is split across the files listed in Section 14; `index.html` loads them in dependency order.
+- [ ] Zero HTML DOM elements used for any game panel, button, overlay, or widget.
+- [ ] `Phaser.Game` config declares `input: { activePointers: 3 }`.
+- [ ] Both controllers respond simultaneously to independent touches.
+- [ ] Helm drag uses `Math.atan2` angular delta — not `deltaX` or `deltaY`.
+- [ ] A dedicated UI camera is used for all HUD/widget objects.
+- [ ] All timed callbacks use `this.time.delayedCall()` or `this.time.addEvent()` — zero `setTimeout`.
+- [ ] All input uses Phaser events (`this.input.on(...)`) — zero `document.addEventListener`.
+- [ ] All animations use `this.tweens.add()` — no manual lerp of visual properties in `update()`.
+- [ ] Wind arrows are drawn with a viewport-aware `Graphics` (only visible grid cells per frame); no world-sized `RenderTexture` is used.
+- [ ] `SailingAudio` uses a standalone `window.AudioContext` created in `start()`, not Phaser's sound system.
+- [ ] `SailingAudio` constructor is called before any panel that needs volume values (`getVol()` reads localStorage, no AudioContext needed).
+- [ ] Audio `start()` is called only on first user gesture (pointerdown or keydown).
+- [ ] Audio suspends on pause/failure and resumes on game resume/restart.
+- [ ] Sound settings tab shows four volume rows (master, water, luff, effects) with `< X% >` controls; values persist to `sailsim_audio` in localStorage.
+- [ ] Scene shutdown cleans up all listeners.
+- [ ] The game scales correctly to any screen size on both desktop and mobile.
+- [ ] The game runs at 60 fps on a modern mobile browser.
+- [ ] Settings panel changes wind direction, speed, and variability in real time.
 
 World assets use **`Phaser.GameObjects.Graphics`** (programmatic drawing). Controller widgets use **inline SVG converted to base64 textures** — do not attempt to replicate them with the Graphics API.
 
@@ -1122,15 +2155,15 @@ World assets use **`Phaser.GameObjects.Graphics`** (programmatic drawing). Contr
 |---|---|
 | **Boat hull** | `graphics.fillStyle(...).fillPoints(polygon, true)` with a pointed array of vertices |
 | **Mast** | `graphics.fillCircle(x, y, 5)` |
-| **Boom** | `graphics.lineBetween(mx, my, bx, by)` — rotate the Graphics object with `setAngle()` |
-| **Sail** | `graphics.fillTriangle(...)`, `graphics.setAlpha(0.6)` |
+| **Boom** | Separate `Graphics` child of the boat Container. Redrawn every frame via `_updateBoom(trimAngle, signedAWA)` — **never use `setAngle()`**. Boom tip in container space (bow=−Y, stern=+Y): `boomSide = AWA ≥ 0 ? 1 : −1`; `boomTipX = boomSide × BL × sin(trimRad)`; `boomTipY = BL × cos(trimRad)`. |
+| **Sail** | Redrawn in `_updateBoom(trimAngle, signedAWA, trimStatus)`. `g.fillPoints([mast, head, bellyPoint, clew], true)`. Head vertex always at `headY = sailHeadY * 0.15` (stays near mast in all states — permanent visual design choice). Belly point = midpoint of leech offset toward leeward by `BL × 0.5 × sin(trimRad)`. Flutter: `headX = sin(time * 0.018) * boomSide * (luffing ? 4 : easing ? 1.5 : 0)`. Alpha 0.55 normal, 0.28 when luffing. Leeward perpendicular unit: `perpX = boomSide × boomTipY / BL`, `perpY = −boomSide × boomTipX / BL`. Boom line drawn on top. |
 | **Buoy** | `graphics.strokeCircle()` + `this.add.text()` for label |
 | **Island** | `graphics.fillPoints(polygon)` with two passes (sandy outer, green inner) |
 | **Dock** | `graphics.fillRect()` repeated for stripes; dashed rectangle via short `lineBetween` segments |
 | **Water base** | `graphics.fillRect(0, 0, worldW, worldH)` in dark navy; color tweened toward grey-blue as wind speed increases |
 | **Water dashes (wind-reactive)** | Pool of plain objects `{x, y, angle, phase}`. Each frame: advance position by `driftSpeed * windDir * delta`; wrap at world bounds. Draw each as a short `strokePoints` of 3–4 sine-offset points. Re-parameterize count/length/alpha on tier change by tweening properties in place — do NOT recreate the pool. |
-| **Wake (V-wake)** | Rolling array of `{x, y, age}`. Push current position each frame; remove entries where `age > 1.5s`. Per draw: compute lateral offset `(age/1.5) * 35 * (speed/15)`, draw two `strokePoints` paths (port + starboard) with per-point alpha. `graphics.clear()` + full redraw each frame (~60 points, negligible cost). |
-| **Wind arrows** | Generate once on a `RenderTexture` via `graphics.fillTriangle()`; invalidate and redraw only when wind direction changes. |
+| **Wake (V-wake)** | Rolling array of `{x, y, age, heading, speed}` — record heading and speed per point. Push stern position each frame; remove entries where `age > 1.5s`. Per draw: `spread = (age/1.5)*35*(speed/15)`, perpendicular offset = `(cos heading, sin heading)` × spread (NOT `-sin/cos`). Draw two `strokePoints` paths (port/stbd) with per-point alpha. `graphics.clear()` + full redraw each frame (~60 points, negligible cost). |
+| **Wind arrows** | Viewport-aware `Graphics` — compute only visible grid cells each frame using camera scroll position (see Section 16). Do NOT use a world-sized `RenderTexture`. |
 | **No-go zone arc** | `graphics.slice(x, y, r, startAngle, endAngle)` in red with `setAlpha(0.3)`; child of boat container. |
 | **Vector overlays** (indicators) | `graphics.lineBetween()` + `graphics.fillTriangle()` for arrowheads; redrawn each frame on a dedicated overlay Graphics object above the world layer. |
 
@@ -1217,20 +2250,29 @@ Camera setup: `gameScene.cameras.main.startFollow(boatSprite, true, 0.1, 0.1)` (
 - **Constants object**: all tunable numbers in one `CONSTANTS` block.
   ```js
   const CONSTANTS = {
-    NO_GO_ZONE_DEG: 40,
+    NO_GO_ZONE_DEG: 15,       // ±15° = 30° total no-go zone
     MAX_RUDDER_ANGLE: 45,
-    BOAT_DRAG: 0.97,
+    BOAT_DRAG: 0.999,          // 0.999^60 ≈ 94%/s — very gentle, allows escape from no-go zone
+    BASE_ACCEL: 0.25,          // lerp rate; low = high inertia everywhere
     TACK_PENALTY_FACTOR: 0.7,
     TACK_PENALTY_DURATION_MS: 1000,
     SHALLOW_SPEED_LIMIT: 1.5,
     DOCK_SUCCESS_SPEED: 1.0,
     DOCK_SUCCESS_HEADING_TOLERANCE: 20,
+    BUOY_DETECTION_RADIUS: 84,  // 6 × buoy visual radius (14px)
   };
   ```
 
 - **Frame-rate independent**: all physics multiplied by `delta` (in seconds).
   ```js
   boatSpeed = lerp(boatSpeed, targetSpeed, CONSTANTS.ACCEL * delta);
+  ```
+
+- **Stateful button highlight — pointerout must restore active color**: When a button group uses a refresh function to color the active item (e.g. displacement, layout slot), the generic `_addBtn` pointerout handler must be overridden to call `_refreshXxxBtns()` rather than restoring the hardcoded base color. Otherwise mousing over any button erases the gold highlight from the active one.
+  ```js
+  const btn = this._addBtn(container, x, y, label, onClick, opts);
+  btn.off('pointerout');
+  btn.on('pointerout', () => this._refreshDispBtns());  // restore active state
   ```
 
 - **No map-specific code in scenes**: `GameScene.create()` receives `this.scene.settings.data.map` and delegates entirely to `WorldBuilder.build(map)`.
@@ -1241,7 +2283,7 @@ Camera setup: `gameScene.cameras.main.startFollow(boatSprite, true, 0.1, 0.1)` (
 
 - **Mobile tap targets**: all interactive controls must have a minimum hit area of 48×48px.
 
-- **Wind arrows**: drawn once onto a `RenderTexture`; invalidated and redrawn only when wind direction changes — not every frame.
+- **Wind arrows**: drawn each frame with a viewport-aware `Graphics` (only visible grid cells). Do NOT use a world-sized `RenderTexture` — it can exceed WebGL max texture limits and render only partially.
 
 - **i18n in Phaser**: store a reference to every `Phaser.GameObjects.Text` that displays translated content. On `events.emit('lang-changed')`, call `.setText(t(key))` on each one.
 
@@ -1282,10 +2324,12 @@ Camera setup: `gameScene.cameras.main.startFollow(boatSprite, true, 0.1, 0.1)` (
 - [ ] A dark vignette appears on the screen edge when the boat is within 150px of the world boundary.
 - [ ] The boat cannot leave the world boundary rectangle.
 - [ ] Buoys must be rounded in numeric order. Rounding out-of-order has no effect.
-- [ ] On rounding, the buoy flashes yellow, a ping plays, and a brief text appears and fades.
+- [ ] Each pending buoy shows a dashed detection circle (84px, gold, pulsing). Circle hides on rounding.
+- [ ] On rounding, the buoy flashes yellow, turns grey, a brief text floats up, device vibrates 25 ms.
 - [ ] After rounding all buoys, entering the start zone triggers the completion banner.
+- [ ] Objective arrow (cyan triangle) points from boat toward next target at all times; bounces gently; disappears when complete.
 - [ ] The start zone is rendered as two coloured posts with a dashed line between them.
-- [ ] Stuck-in-irons state is entered after 2 continuous seconds of AWA < 30° and speed < 1 kts.
+- [ ] Stuck-in-irons state is entered after 2 continuous seconds of AWA < `NO_GO_ZONE_DEG × 2` (30°) and speed < 1 kts.
 - [ ] While in irons: rudder effectiveness is 20%, no-go arc pulses, label is visible.
 - [ ] Escaping irons by easing and applying helm restores normal sailing.
 - [ ] Pause menu has a Restart button that resets position, wake, and objective without exiting.
@@ -1299,8 +2343,8 @@ Camera setup: `gameScene.cameras.main.startFollow(boatSprite, true, 0.1, 0.1)` (
 - [ ] Haptic feedback fires on tack, jibe, collision, buoy rounding, and objective complete with correct patterns.
 - [ ] Restart and Back to Menu both show a confirm dialog before executing. Cancelling returns to the pause menu.
 - [ ] Sail trim glow (gold) appears on transition into trimmed state and fades out in ~0.8 s.
-- [ ] Sail luffing shimmer (blue-white) oscillates continuously while AWA < 40° and stops immediately when AWA > 40°.
-- [ ] Off-screen objective arrow appears on the screen edge when the next buoy is outside the viewport; disappears when it enters.
+- [ ] Sail luffing shimmer (blue-white) oscillates continuously while AWA < `NO_GO_ZONE_DEG` and stops immediately on exit.
+- [ ] Objective arrow (world-space, 105px from boat, cyan, bouncing) always points to next target; switches automatically as objectives are completed.
 - [ ] Mini-map toggle in Indicators Panel shows/hides the mini-map overlay. Boat, buoys, and islands are correctly scaled.
 - [ ] Mini-map buoy dots reflect rounding state (grey = done, orange = pending, bright = next).
 - [ ] Notification panel shows contextual messages with correct priority colors and durations.
@@ -1315,6 +2359,14 @@ Camera setup: `gameScene.cameras.main.startFollow(boatSprite, true, 0.1, 0.1)` (
 - [ ] Switching to English refreshes all on-screen text immediately.
 - [ ] Language preference persists to storage and is restored on reload.
 - [ ] Both `'es'` and `'en'` translation blocks are complete — no missing keys.
+- [ ] Colliding with a not-yet-rounded buoy (within ~23px) triggers mission failure.
+- [ ] Colliding with an island (boat center inside polygon) triggers mission failure.
+- [ ] Entering a dock at speed > 2× DOCK_SUCCESS_SPEED triggers failure (crash), not success.
+- [ ] Failure panel shows the specific reason (`fail.hit_buoy`, `fail.hit_island`, `fail.hit_dock`) and the objective reminder.
+- [ ] Failure panel background is semi-transparent (alpha ~0.48) so the broken boat is visible behind it.
+- [ ] Broken boat overlay (red hull + crack lines) appears on the boat container when failure is triggered.
+- [ ] "Reiniciar misión" button resets all state: boat position, physics, tracker, buoy visuals, broken overlay, failure panel.
+- [ ] Objective text (bottom HUD) is centered at the bottom of the screen, not left-aligned.
 
 ### Part 2 — Web / Phaser Implementation
 
