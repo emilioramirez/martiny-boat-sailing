@@ -32,22 +32,22 @@ class HelmController {
 
     // Background panel
     const bg = this.scene.add.graphics();
-    bg.fillStyle(0x1a1a2e, 0.55);
+    bg.fillStyle(THEME.panelBg, 0.55);
     bg.fillRoundedRect(-W / 2, -H / 2, W, H, 10);
-    bg.lineStyle(1, 0x3a3a5e, 0.8);
+    bg.lineStyle(1, THEME.panelBorder, 0.8);
     bg.strokeRoundedRect(-W / 2, -H / 2, W, H, 10);
 
     // Panel title
     const titleLbl = this.scene.add.text(0, -H / 2 + 12, t('helm.label'), {
-      fontSize: '10px', fontFamily: 'Arial', fontStyle: 'bold', color: '#667788',
+      fontSize: '10px', fontFamily: 'Arial', fontStyle: 'bold', color: THEME.textDim,
     }).setOrigin(0.5, 0.5);
 
     // PORT / STBD labels — at mid-panel, flanking the tiller arc
     this.portLabel = this.scene.add.text(-W / 2 + 8, -8, t('helm.port'), {
-      fontSize: '10px', fontFamily: 'Arial', fontStyle: 'bold', color: '#8899aa',
+      fontSize: '10px', fontFamily: 'Arial', fontStyle: 'bold', color: THEME.textLabel,
     }).setOrigin(0, 0.5);
     this.stbdLabel = this.scene.add.text(W / 2 - 8, -8, t('helm.starboard'), {
-      fontSize: '10px', fontFamily: 'Arial', fontStyle: 'bold', color: '#8899aa',
+      fontSize: '10px', fontFamily: 'Arial', fontStyle: 'bold', color: THEME.textLabel,
     }).setOrigin(1, 0.5);
 
     // Mini-boat silhouette (fixed, drawn once) — in the lower half of the panel
@@ -112,13 +112,13 @@ class HelmController {
     g.fillCircle(pivotX, pivotY, 5);
 
     // Grab handle
-    g.fillStyle(0xC9A84C, 1);
+    g.fillStyle(THEME.gold, 1);
     g.fillCircle(tipX, tipY, 8);
     g.lineStyle(1.5, 0x8B5E0A, 1);
     g.strokeCircle(tipX, tipY, 8);
 
     // Highlight PORT/STBD
-    const dim = '#8899aa', bright = '#ffffff';
+    const dim = THEME.textLabel, bright = THEME.textPrimary;
     if (this.helmAngle < -5) {
       this.portLabel.setColor(bright);
       this.stbdLabel.setColor(dim);

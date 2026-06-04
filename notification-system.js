@@ -16,7 +16,7 @@ class NotificationSystem {
     this._bg   = scene.add.graphics();
     this._text = scene.add.text(0, 0, '', {
       fontSize: '13px', fontFamily: 'Arial', fontStyle: 'bold',
-      color: '#ffffff', stroke: '#000000', strokeThickness: 1,
+      color: THEME.textPrimary, stroke: '#000000', strokeThickness: 1,
     }).setOrigin(0.5, 0.5);
     this.container.add(this._bg);
     this.container.add(this._text);
@@ -203,16 +203,16 @@ class NotificationSystem {
 
     // Border color by priority
     const borderCol = {
-      urgent:  0xff4444,
-      warning: 0xffcc44,
-      success: 0x44ff88,
-      info:    0x6688aa,
-    }[priority] ?? 0x6688aa;
+      urgent:  THEME.notifDanger,
+      warning: THEME.notifWarn,
+      success: THEME.notifOk,
+      info:    THEME.notifInfo,
+    }[priority] ?? THEME.notifInfo;
 
     // Draw pill
     const g = this._bg;
     g.clear();
-    g.fillStyle(0x08121e, 0.88);
+    g.fillStyle(THEME.panelBgDeep, 0.88);
     g.fillRoundedRect(-pillW / 2, -pillH / 2, pillW, pillH, 8);
     g.lineStyle(1.5, borderCol, 0.9);
     g.strokeRoundedRect(-pillW / 2, -pillH / 2, pillW, pillH, 8);

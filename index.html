@@ -15,6 +15,7 @@
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.87.0/dist/phaser.min.js"></script>
 
   <!-- Load in strict dependency order -->
+  <script src="theme.js"></script>
   <script src="constants.js"></script>
   <script src="translations.js"></script>
   <script src="maps.js"></script>
@@ -51,9 +52,9 @@
         // Draws a plank-style rounded rect matching the banner in the image.
         const drawWood = (g, x, y, w, h, hover = false) => {
           g.clear();
-          g.fillStyle(hover ? 0xe8bf78 : 0xd4a96e, hover ? 0.92 : 0.80);
+          g.fillStyle(hover ? THEME.woodHover : THEME.woodNormal, hover ? 0.92 : 0.80);
           g.fillRoundedRect(x - w / 2, y - h / 2, w, h, 8);
-          g.lineStyle(2.5, 0x7a4010, 0.95);
+          g.lineStyle(2.5, THEME.woodBorder, 0.95);
           g.strokeRoundedRect(x - w / 2, y - h / 2, w, h, 8);
         };
 
@@ -61,7 +62,7 @@
           const g = this.add.graphics();
           drawWood(g, x, y, w, h);
           const txt = this.add.text(x, y, label, {
-            fontSize, fontFamily: 'Arial', fontStyle: 'bold', color: '#1a2a5c',
+            fontSize, fontFamily: 'Arial', fontStyle: 'bold', color: THEME.woodText,
           }).setOrigin(0.5).setInteractive({
             useHandCursor: true,
             hitArea: new Phaser.Geom.Rectangle(-w / 2, -h / 2, w, h),
@@ -81,7 +82,7 @@
 
         // Separator + "Elige un mapa" label
         const sg = this.add.graphics();
-        sg.lineStyle(1, 0xc8a050, 0.55);
+        sg.lineStyle(1, THEME.gold, 0.55);
         sg.lineBetween(cx - 130, 146, cx + 130, 146);
         this.add.text(cx, 158, t('menu.select_map'), {
           fontSize: '11px', fontFamily: 'Arial', fontStyle: 'bold', color: '#7a5020',
@@ -98,7 +99,7 @@
         // Credit (bottom-right)
         this.add.text(W - 10, H - 10,
           'Developed by Gaucho - https://github.com/emilioramirez',
-          { fontSize: '10px', fontFamily: 'Arial', color: '#c8a050',
+          { fontSize: '10px', fontFamily: 'Arial', color: THEME.goldStr,
             stroke: '#000000', strokeThickness: 2, alpha: 0.7 }
         ).setOrigin(1, 1);
 
@@ -106,7 +107,7 @@
         const langBtn = this.add.text(W - 14, 14,
           `[${getCurrentLang().toUpperCase()}]`,
           { fontSize: '14px', fontFamily: 'Arial', fontStyle: 'bold',
-            color: '#c8a050', stroke: '#3a1f08', strokeThickness: 3 }
+            color: THEME.goldStr, stroke: '#3a1f08', strokeThickness: 3 }
         ).setOrigin(1, 0).setInteractive({ useHandCursor: true });
         langBtn.on('pointerdown', () => {
           setLanguage(getCurrentLang() === 'es' ? 'en' : 'es');

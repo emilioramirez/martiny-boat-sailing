@@ -27,20 +27,20 @@ class TutorialManager {
 
     // Instruction text
     this._tooltipTxt = scene.add.text(0, 0, '', {
-      fontSize: '14px', fontFamily: 'Arial', color: '#ddeeff',
+      fontSize: '14px', fontFamily: 'Arial', color: THEME.textSoft,
       wordWrap: { width: 268 }, align: 'center',
     }).setOrigin(0.5, 0);
 
     // Continue button
     this._nextBtn = scene.add.text(0, 0, '', {
-      fontSize: '14px', fontFamily: 'Arial', color: '#44ddff',
-      backgroundColor: '#1a2a3a', padding: { x: 22, y: 9 },
+      fontSize: '14px', fontFamily: 'Arial', color: THEME.textAccent,
+      backgroundColor: THEME.btnBg, padding: { x: 22, y: 9 },
     }).setOrigin(0.5, 0).setInteractive({ useHandCursor: true });
     this._nextBtn.on('pointerdown', () => this._advance());
 
     // Skip button (hidden on last step)
     this._skipBtn = scene.add.text(0, 0, t('tutorial.skip'), {
-      fontSize: '12px', fontFamily: 'Arial', color: '#556677',
+      fontSize: '12px', fontFamily: 'Arial', color: THEME.textMuted,
     }).setOrigin(0.5, 0).setInteractive({ useHandCursor: true });
     this._skipBtn.on('pointerdown', () => this._finish());
 
@@ -147,7 +147,7 @@ class TutorialManager {
       if (hl.x > 0)           g.fillRect(0,          hl.y,        hl.x,            hl.h);
       if (hl.x + hl.w < W)   g.fillRect(hl.x + hl.w, hl.y,      W - hl.x - hl.w, hl.h);
       // Spotlight border glow
-      g.lineStyle(2, 0x44eeff, 0.88);
+      g.lineStyle(2, THEME.panelBorderAlt, 0.88);
       g.strokeRoundedRect(hl.x - 4, hl.y - 4, hl.w + 8, hl.h + 8, 8);
     } else {
       g.fillRect(0, 0, W, H);
@@ -180,9 +180,9 @@ class TutorialManager {
     // Tooltip background
     const tb = this._tooltipBg;
     tb.clear();
-    tb.fillStyle(0x08121e, 0.96);
+    tb.fillStyle(THEME.panelBgDeep, 0.96);
     tb.fillRoundedRect(tipX, tipY, TW, tipH, 10);
-    tb.lineStyle(1.5, 0x2a4a6e, 1);
+    tb.lineStyle(1.5, THEME.panelBorderAlt, 1);
     tb.strokeRoundedRect(tipX, tipY, TW, tipH, 10);
 
     // Position text + buttons inside tooltip

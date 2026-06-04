@@ -152,6 +152,12 @@ class GameScene extends Phaser.Scene {
     if (this.isPaused) return;
     const dt = delta / 1000; // seconds
 
+    // ── Timer ─────────────────────────────────────────────────────────────────
+    if (this._timerRunning) {
+      this._timerMs += delta;
+      this.hudTimer.setText(this._formatTime(this._timerMs));
+    }
+
     // ── Keyboard input ────────────────────────────────────────────────────────
     // Left/Right: direct rudder override; Up/Down: trim adjustment
     let rudderAxisOverride = null;
@@ -644,7 +650,7 @@ class GameScene extends Phaser.Scene {
 
     // ── Broken boat overlay — shown on collision failure ──────────────────────
     const broken = this.add.graphics();
-    broken.fillStyle(0xcc2222, 0.75);
+    broken.fillStyle(THEME.failureBorder, 0.75);
     broken.fillPoints([
       { x: 0,   y: -hl },
       { x: hw,  y: -hl * 0.3 },
@@ -801,7 +807,7 @@ class GameScene extends Phaser.Scene {
     };
     const sep = (grp, y) => {
       const g = this.add.graphics();
-      g.lineStyle(1, 0x2a3a5e, 1);
+      g.lineStyle(1, THEME.panelBorderAlt, 1);
       g.lineBetween(-PW / 2 + 12, y, PW / 2 - 12, y);
       addTo(grp, g);
     };
@@ -813,22 +819,22 @@ class GameScene extends Phaser.Scene {
     c.add(dim);
 
     const bg = this.add.graphics();
-    bg.fillStyle(0x0c1624, 0.97);
+    bg.fillStyle(THEME.panelBgDark, 0.97);
     bg.fillRoundedRect(-PW / 2, -225, PW, 450, 14);
-    bg.lineStyle(1, 0x2a4a6e, 1);
+    bg.lineStyle(1, THEME.panelBorderAlt, 1);
     bg.strokeRoundedRect(-PW / 2, -225, PW, 450, 14);
     c.add(bg);
 
     // ── Title ──────────────────────────────────────────────────────────────
     txt(null, 0, -190, t('pause.title'), {
-      fontSize: '20px', fontFamily: 'Arial', fontStyle: 'bold', color: '#ffffff',
+      fontSize: '20px', fontFamily: 'Arial', fontStyle: 'bold', color: THEME.textPrimary,
     });
 
     // ── Tab bar ────────────────────────────────────────────────────────────
     const makeTab = (label, name, x) => {
       const btn = this.add.text(x, -155, label, {
-        fontSize: '12px', fontFamily: 'Arial', color: '#44ddff',
-        backgroundColor: '#1a2a3a', padding: { x: 20, y: 7 },
+        fontSize: '12px', fontFamily: 'Arial', color: THEME.textAccent,
+        backgroundColor: THEME.btnBg, padding: { x: 20, y: 7 },
       }).setOrigin(0.5, 0.5).setInteractive({ useHandCursor: true });
       btn.on('pointerdown', () => this._setTab(name));
       c.add(btn);
@@ -857,7 +863,7 @@ class GameScene extends Phaser.Scene {
 
     // Wind direction
     ltxt(sg, lx, -82, t('settings.wind_dir') + ':', {
-      fontSize: '12px', fontFamily: 'Arial', color: '#8899aa',
+      fontSize: '12px', fontFamily: 'Arial', color: THEME.textLabel,
     });
     this._addBtn(sg, 50, -82, '<', () => {
       this._baseWindDir = (this._baseWindDir - 15 + 360) % 360;
@@ -866,7 +872,7 @@ class GameScene extends Phaser.Scene {
       this._refreshWindHUD();
     }, { padding: { x: 14, y: 9 } });
     this._windDirTxt = txt(sg, 108, -82, Math.round(this._baseWindDir) + '°', {
-      fontSize: '13px', fontFamily: 'Arial', color: '#ffffff',
+      fontSize: '13px', fontFamily: 'Arial', color: THEME.textPrimary,
     });
     this._addBtn(sg, 165, -82, '>', () => {
       this._baseWindDir = (this._baseWindDir + 15 + 360) % 360;
@@ -877,7 +883,7 @@ class GameScene extends Phaser.Scene {
 
     // Wind speed
     ltxt(sg, lx, -40, t('settings.wind_speed') + ':', {
-      fontSize: '12px', fontFamily: 'Arial', color: '#8899aa',
+      fontSize: '12px', fontFamily: 'Arial', color: THEME.textLabel,
     });
     this._addBtn(sg, 50, -40, '<', () => {
       this.mapData.wind.speed = Math.max(5, this.mapData.wind.speed - 1);
@@ -885,7 +891,7 @@ class GameScene extends Phaser.Scene {
       this._refreshWindHUD();
     }, { padding: { x: 14, y: 9 } });
     this._windSpdTxt = txt(sg, 108, -40, this.mapData.wind.speed + ' kts', {
-      fontSize: '13px', fontFamily: 'Arial', color: '#ffffff',
+      fontSize: '13px', fontFamily: 'Arial', color: THEME.textPrimary,
     });
     this._addBtn(sg, 165, -40, '>', () => {
       this.mapData.wind.speed = Math.min(25, this.mapData.wind.speed + 1);
@@ -896,7 +902,7 @@ class GameScene extends Phaser.Scene {
     // Displacement
     sep(sg, -8);
     ltxt(sg, lx, 12, t('indicators.displacement') + ':', {
-      fontSize: '12px', fontFamily: 'Arial', color: '#8899aa',
+      fontSize: '12px', fontFamily: 'Arial', color: THEME.textLabel,
     });
     this._dispBtns = {};
     [
@@ -917,7 +923,7 @@ class GameScene extends Phaser.Scene {
     // Language
     sep(sg, 65);
     ltxt(sg, lx, 88, t('settings.language') + ':', {
-      fontSize: '12px', fontFamily: 'Arial', color: '#8899aa',
+      fontSize: '12px', fontFamily: 'Arial', color: THEME.textLabel,
     });
     this._addBtn(sg, 50, 88, 'ES', () => { setLanguage('es'); this.scene.restart(); }, { padding: { x: 14, y: 9 } });
     this._addBtn(sg, 100, 88, 'EN', () => { setLanguage('en'); this.scene.restart(); }, { padding: { x: 14, y: 9 } });
@@ -927,7 +933,7 @@ class GameScene extends Phaser.Scene {
     this._addBtn(sg, 0, 148, t('tutorial.replay'), () => {
       this._togglePause();
       this.tutorial.replay();
-    }, { fontSize: '13px', color: '#99aabb', padding: { x: 18, y: 11 } });
+    }, { fontSize: '13px', color: THEME.textSub, padding: { x: 18, y: 11 } });
 
     // ══ LAYOUT TAB ═════════════════════════════════════════════════════════
     const lg = this._layoutGroup;
@@ -936,7 +942,7 @@ class GameScene extends Phaser.Scene {
     const slotBx = [-88, -52, -16, 20, 56, 92];
 
     ltxt(lg, lx, -20, t('layout.helm_row') + ':', {
-      fontSize: '12px', fontFamily: 'Arial', color: '#99aabb',
+      fontSize: '12px', fontFamily: 'Arial', color: THEME.textSub,
     });
     this._helmSlotBtns = {};
     SLOTS.forEach((s, i) => {
@@ -951,7 +957,7 @@ class GameScene extends Phaser.Scene {
     });
 
     ltxt(lg, lx, 42, t('layout.ms_row') + ':', {
-      fontSize: '12px', fontFamily: 'Arial', color: '#99aabb',
+      fontSize: '12px', fontFamily: 'Arial', color: THEME.textSub,
     });
     this._msSlotBtns = {};
     SLOTS.forEach((s, i) => {
@@ -978,14 +984,14 @@ class GameScene extends Phaser.Scene {
     VOL_CATS.forEach(({ cat, lk }, i) => {
       const ry = -75 + i * 55;
       ltxt(vg, lx, ry, t(lk) + ':', {
-        fontSize: '12px', fontFamily: 'Arial', color: '#8899aa',
+        fontSize: '12px', fontFamily: 'Arial', color: THEME.textLabel,
       });
       this._addBtn(vg, 40, ry, '<', () => {
         this.audio.setVol(cat, this.audio.getVol(cat) - 0.05);
         this._refreshVolRows();
       }, { padding: { x: 14, y: 9 } });
       this._volTxts[cat] = txt(vg, 108, ry, '', {
-        fontSize: '13px', fontFamily: 'Arial', color: '#ffffff',
+        fontSize: '13px', fontFamily: 'Arial', color: THEME.textPrimary,
       });
       this._addBtn(vg, 175, ry, '>', () => {
         this.audio.setVol(cat, this.audio.getVol(cat) + 0.05);
@@ -997,30 +1003,30 @@ class GameScene extends Phaser.Scene {
     // ══ BOTTOM (always visible) ════════════════════════════════════════════
     sep(null, 178);
     this._addBtn(c, -155, 200, t('pause.restart'), () => this._restartMap(), {
-      fontSize: '14px', color: '#ff8866', padding: { x: 14, y: 10 },
+      fontSize: '14px', color: THEME.restartText, padding: { x: 14, y: 10 },
     });
     this._addBtn(c, 0, 200, t('pause.resume'), () => this._togglePause(), {
-      fontSize: '14px', color: '#44ddff', bg: '#0a1828', padding: { x: 14, y: 10 },
+      fontSize: '14px', color: THEME.textAccent, bg: THEME.btnBgDark, padding: { x: 14, y: 10 },
     });
     this._addBtn(c, 155, 200, '← ' + t('pause.menu'), () => {
       this.scene.start('MenuScene');
-    }, { fontSize: '14px', color: '#aaccdd', padding: { x: 14, y: 10 } });
+    }, { fontSize: '14px', color: THEME.textSoft, padding: { x: 14, y: 10 } });
 
     this._setTab('game');
   }
 
   // Shared button factory used by pause panel and HUD
   _addBtn(container, x, y, label, onClick, opts = {}) {
-    const color = opts.color ?? '#44ddff';
+    const color = opts.color ?? THEME.textAccent;
     const btn   = this.add.text(x, y, label, {
       fontSize:        opts.fontSize ?? '14px',
       fontFamily:      'Arial',
       color,
-      backgroundColor: opts.bg ?? '#0d1a2a',
+      backgroundColor: opts.bg ?? THEME.btnBgDark,
       padding:         opts.padding ?? { x: 9, y: 6 },
     }).setOrigin(opts.ox ?? 0.5, opts.oy ?? 0.5)
       .setInteractive({ useHandCursor: true });
-    btn.on('pointerover',  () => btn.setColor('#ffffff'));
+    btn.on('pointerover',  () => btn.setColor(THEME.textPrimary));
     btn.on('pointerout',   () => btn.setColor(color));
     btn.on('pointerdown',  onClick);
     if (container) container.add(btn);
@@ -1040,8 +1046,8 @@ class GameScene extends Phaser.Scene {
     this._soundGroup.setVisible(name === 'sound');
     this._layoutGroup.setVisible(name === 'layout');
     this._indicatorsGroup.setVisible(name === 'indicators');
-    const activeCol = '#44ddff', inactiveCol = '#667788';
-    const activeBg  = '#1a2a3a', inactiveBg  = '#0d1a2a';
+    const activeCol = THEME.textAccent, inactiveCol = THEME.textDim;
+    const activeBg  = THEME.btnBg,     inactiveBg  = THEME.btnBgDark;
     for (const [btn, tab] of [
       [this._tabGameBtn,   'game'],
       [this._tabSoundBtn,  'sound'],
@@ -1070,6 +1076,10 @@ class GameScene extends Phaser.Scene {
     this.wakePoints = [];
     this.physics    = new SailingPhysics();
 
+    this._timerMs      = 0;
+    this._timerRunning = true;
+    this.hudTimer.setText('0.0s');
+
     this.objectiveTracker.reset();
     this._completionShown = false;
     this.isFailed         = false;
@@ -1093,13 +1103,23 @@ class GameScene extends Phaser.Scene {
     this.audio.resume();
   }
 
+  _formatTime(ms) {
+    const tenths = Math.floor(ms / 100);
+    const min    = Math.floor(tenths / 600);
+    const sec    = Math.floor((tenths % 600) / 10);
+    const dec    = tenths % 10;
+    return min > 0
+      ? `${min}:${String(sec).padStart(2, '0')}.${dec}`
+      : `${sec}.${dec}s`;
+  }
+
   _getPointOfSail(absAWA) {
-    if (absAWA < CONSTANTS.NO_GO_ZONE_DEG) return { key: 'pos.in_irons', color: '#ff5555' };
-    if (absAWA < 60)  return { key: 'pos.close_hauled', color: '#44ddff' };
-    if (absAWA < 90)  return { key: 'pos.close_reach',  color: '#44ff99' };
-    if (absAWA < 120) return { key: 'pos.beam_reach',   color: '#aaff44' };
-    if (absAWA < 150) return { key: 'pos.broad_reach',  color: '#ffcc44' };
-    return               { key: 'pos.running',          color: '#ff8844' };
+    if (absAWA < CONSTANTS.NO_GO_ZONE_DEG) return { key: 'pos.in_irons', color: THEME.posIrons };
+    if (absAWA < 60)  return { key: 'pos.close_hauled', color: THEME.posCloseHauled };
+    if (absAWA < 90)  return { key: 'pos.close_reach',  color: THEME.posCloseReach  };
+    if (absAWA < 120) return { key: 'pos.beam_reach',   color: THEME.posBeamReach   };
+    if (absAWA < 150) return { key: 'pos.broad_reach',  color: THEME.posBroadReach  };
+    return               { key: 'pos.running',          color: THEME.posRunning      };
   }
 
   _updateObjectiveArrow(time) {
@@ -1180,7 +1200,7 @@ class GameScene extends Phaser.Scene {
     g.clear();
     g.fillStyle(0x0a1628, 0.78);
     g.fillCircle(cx, cy, r + 2);
-    g.lineStyle(1, 0x2a3a5e, 1);
+    g.lineStyle(1, THEME.panelBorderAlt, 1);
     g.strokeCircle(cx, cy, r + 2);
 
     const a  = Phaser.Math.DegToRad(windDir - 90);
@@ -1210,12 +1230,12 @@ class GameScene extends Phaser.Scene {
     const classes = CONSTANTS.DISPLACEMENT;
     [['light', classes.light.value], ['medium', classes.medium.value], ['heavy', classes.heavy.value]]
       .forEach(([k, v]) => {
-        this._dispBtns[k]?.setColor(Math.abs(this.displacement - v) < 0.1 ? '#ffcc44' : '#44ddff');
+        this._dispBtns[k]?.setColor(Math.abs(this.displacement - v) < 0.1 ? THEME.goldBright : THEME.textAccent);
       });
   }
 
   _refreshSlotBtns() {
-    const active = '#ffcc44', idle = '#44ddff';
+    const active = THEME.goldBright, idle = THEME.textAccent;
     ['TL', 'TR', 'CL', 'CR', 'BL', 'BR'].forEach(s => {
       this._helmSlotBtns[s]?.setColor(s === this.layoutManager.helmSlot ? active : idle);
       this._msSlotBtns[s]?.setColor(s === this.layoutManager.msSlot     ? active : idle);
@@ -1236,15 +1256,15 @@ class GameScene extends Phaser.Scene {
     c.add(dim);
 
     const bg = this.add.graphics();
-    bg.fillStyle(0x1a0000, 0.48);
+    bg.fillStyle(THEME.failureBg, 0.48);
     bg.fillRoundedRect(-PW / 2, -PH / 2, PW, PH, 14);
-    bg.lineStyle(2, 0xcc2222, 1);
+    bg.lineStyle(2, THEME.failureBorder, 1);
     bg.strokeRoundedRect(-PW / 2, -PH / 2, PW, PH, 14);
     c.add(bg);
 
     const title = this.add.text(0, -PH / 2 + 40, t('fail.title'), {
       fontSize: '26px', fontFamily: 'Arial', fontStyle: 'bold',
-      color: '#ff4444', stroke: '#000000', strokeThickness: 3,
+      color: THEME.failureText, stroke: '#000000', strokeThickness: 3,
     }).setOrigin(0.5);
     c.add(title);
 
@@ -1255,15 +1275,20 @@ class GameScene extends Phaser.Scene {
     }).setOrigin(0.5);
     c.add(this._failReasonTxt);
 
-    this._failObjectiveTxt = this.add.text(0, -PH / 2 + 130, '', {
-      fontSize: '12px', fontFamily: 'Arial', color: '#aaccdd',
+    this._failObjectiveTxt = this.add.text(0, -PH / 2 + 118, '', {
+      fontSize: '12px', fontFamily: 'Arial', color: THEME.textSoft,
       stroke: '#000000', strokeThickness: 2,
       wordWrap: { width: PW - 48 },
     }).setOrigin(0.5);
     c.add(this._failObjectiveTxt);
 
+    this._failTimeTxt = this.add.text(0, -PH / 2 + 150, '', {
+      fontSize: '14px', fontFamily: 'Arial', color: THEME.textLabel,
+    }).setOrigin(0.5);
+    c.add(this._failTimeTxt);
+
     this._addBtn(c, 0, PH / 2 - 38, t('fail.restart'), () => this._restartMap(), {
-      fontSize: '16px', color: '#ff8866',
+      fontSize: '16px', color: THEME.restartText,
     });
   }
 
@@ -1282,6 +1307,8 @@ class GameScene extends Phaser.Scene {
     this._failReasonTxt.setText(t(reasonKey));
     this._failObjectiveTxt.setText(t('fail.objective_was') + ': ' + t(this.mapData.objectiveKey));
 
+    this._timerRunning = false;
+    this._failTimeTxt.setText(`⏱ ${this._formatTime(this._timerMs)}  💨 ${this.mapData.wind.speed} kts · ${Math.round(this.mapData.wind.direction)}°`);
     this.brokenGraphics.setVisible(true);
     this.failurePanel.setVisible(true);
 
@@ -1318,27 +1345,41 @@ class GameScene extends Phaser.Scene {
 
     // Panel
     const bg = this.add.graphics();
-    bg.fillStyle(0x0c1624, 0.97);
+    bg.fillStyle(THEME.panelBgDark, 0.97);
     bg.fillRoundedRect(-PW / 2, -PH / 2, PW, PH, 14);
-    bg.lineStyle(1, 0x2a4a6e, 1);
+    bg.lineStyle(1, THEME.panelBorderAlt, 1);
     bg.strokeRoundedRect(-PW / 2, -PH / 2, PW, PH, 14);
     c.add(bg);
 
     const title = this.add.text(0, -PH / 2 + 40, t('complete.title'), {
       fontSize: '30px', fontFamily: 'Arial', fontStyle: 'bold',
-      color: '#44ffaa', stroke: '#000000', strokeThickness: 3,
+      color: THEME.completionText, stroke: '#000000', strokeThickness: 3,
     }).setOrigin(0.5);
     c.add(title);
 
+    this._completionTimeTxt = this.add.text(0, -PH / 2 + 90, '', {
+      fontSize: '22px', fontFamily: 'Arial', fontStyle: 'bold',
+      color: THEME.textPrimary, stroke: '#000000', strokeThickness: 2,
+    }).setOrigin(0.5);
+    c.add(this._completionTimeTxt);
+
+    const windInfo = this.add.text(0, -PH / 2 + 120, '', {
+      fontSize: '12px', fontFamily: 'Arial', color: THEME.textLabel,
+    }).setOrigin(0.5);
+    windInfo.setText(`💨 ${this.mapData.wind.speed} kts · ${Math.round(this.mapData.wind.direction)}°`);
+    c.add(windInfo);
+
     this._addBtn(c, -70, PH / 2 - 38, t('pause.restart'), () => this._restartMap(), {
-      fontSize: '15px', color: '#44ddff',
+      fontSize: '15px', color: THEME.textAccent,
     });
     this._addBtn(c, 85, PH / 2 - 38, '← ' + t('pause.menu'), () => {
       this.scene.start('MenuScene');
-    }, { fontSize: '15px', color: '#aaccdd' });
+    }, { fontSize: '15px', color: THEME.textSoft });
   }
 
   _showCompletion() {
+    this._timerRunning = false;
+    this._completionTimeTxt.setText(`⏱ ${this._formatTime(this._timerMs)}`);
     this.completionBanner.setVisible(true);
     this.audio.playCompletion();
     this.isPaused = true;
@@ -1353,7 +1394,7 @@ class GameScene extends Phaser.Scene {
   _buildHUD() {
     const style = {
       fontSize: '14px', fontFamily: 'Arial',
-      color: '#ffffff', stroke: '#000000', strokeThickness: 3,
+      color: THEME.textPrimary, stroke: '#000000', strokeThickness: 3,
     };
 
     this.hudSpeed   = this.add.text(12, 12, '', style).setScrollFactor(0).setDepth(20);
@@ -1378,7 +1419,7 @@ class GameScene extends Phaser.Scene {
       this.scale.width / 2, this.scale.height / 2 - 40,
       t('irons.label'),
       { fontSize: '18px', fontFamily: 'Arial', fontStyle: 'bold',
-        color: '#ff4444', stroke: '#000000', strokeThickness: 4,
+        color: THEME.failureText, stroke: '#000000', strokeThickness: 4,
         backgroundColor: '#1a0000', padding: { x: 12, y: 6 } },
     ).setOrigin(0.5).setScrollFactor(0).setDepth(25).setVisible(false);
 
@@ -1391,20 +1432,30 @@ class GameScene extends Phaser.Scene {
         hitAreaCallback: Phaser.Geom.Rectangle.Contains,
         useHandCursor: true,
       });
-    this.pauseBtn.on('pointerover',  () => this.pauseBtn.setColor('#ffffff'));
+    this.pauseBtn.on('pointerover',  () => this.pauseBtn.setColor(THEME.textPrimary));
     this.pauseBtn.on('pointerout',   () => this.pauseBtn.setColor('#888888'));
     this.pauseBtn.on('pointerdown',  () => this._togglePause());
 
     // Objective text (bottom-left)
     this.hudObjective = this.add.text(this.scale.width / 2, this.scale.height - 10, t(this.mapData.objectiveKey), {
-      fontSize: '11px', fontFamily: 'Arial', color: '#aaccdd',
+      fontSize: '11px', fontFamily: 'Arial', color: THEME.textSoft,
       stroke: '#000000', strokeThickness: 2,
       wordWrap: { width: 500 },
     }).setOrigin(0.5, 1).setScrollFactor(0).setDepth(20);
 
+    // Timer (top-left, below pos)
+    this.hudTimer = this.add.text(12, 72, '0.0s', {
+      fontSize: '13px', fontFamily: 'Arial',
+      color: THEME.textLabel, stroke: '#000000', strokeThickness: 2,
+    }).setScrollFactor(0).setDepth(20);
+
+    this._timerMs      = 0;
+    this._timerRunning = true;
+
     this.uiGroup.add(this.hudSpeed);
     this.uiGroup.add(this.hudHeading);
     this.uiGroup.add(this.hudPos);
+    this.uiGroup.add(this.hudTimer);
     this.uiGroup.add(this.hudWind);
     this.uiGroup.add(this.windArrowGfx);
     this.uiGroup.add(this.hudIrons);

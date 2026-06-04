@@ -58,17 +58,17 @@ class MainsheetController {
 
     // ── Outer panel ────────────────────────────────────────────────────────────
     const bg = this.scene.add.graphics();
-    bg.fillStyle(0x1a1a2e, 0.55);
+    bg.fillStyle(THEME.panelBg, 0.55);
     bg.fillRoundedRect(-W / 2, -H / 2, W, H, 10);
-    bg.lineStyle(1, 0x3a3a5e, 0.8);
+    bg.lineStyle(1, THEME.panelBorder, 0.8);
     bg.strokeRoundedRect(-W / 2, -H / 2, W, H, 10);
 
     // ── Rope track — dark inset, right half of panel ───────────────────────────
     const trackW = 44;
     const trackX = 16;  // center of track (shifted right to make room for labels)
-    bg.fillStyle(0x080810, 0.95);
+    bg.fillStyle(THEME.trackBg, 0.95);
     bg.fillRoundedRect(trackX - trackW / 2, TT, trackW, TB - TT, 6);
-    bg.lineStyle(1, 0x2a2a4e, 1);
+    bg.lineStyle(1, THEME.panelBorder, 1);
     bg.strokeRoundedRect(trackX - trackW / 2, TT, trackW, TB - TT, 6);
 
     // ── Gauge labels — left side, aligned to track top/bottom ─────────────────
@@ -76,16 +76,16 @@ class MainsheetController {
     const tickEndX = trackX - trackW / 2 - 3;
 
     const deco = this.scene.add.graphics();
-    deco.lineStyle(1, 0x445566, 0.8);
+    deco.lineStyle(1, THEME.panelBorderAlt, 0.8);
     deco.lineBetween(labelX + 14, TT + 8, tickEndX, TT + 8);
     deco.lineBetween(labelX + 14, TB - 8, tickEndX, TB - 8);
 
     const filarLbl = this.scene.add.text(labelX, TT + 8, t('trim.label_ease'), {
-      fontSize: '8px', fontFamily: 'Arial', fontStyle: 'bold', color: '#667788',
+      fontSize: '8px', fontFamily: 'Arial', fontStyle: 'bold', color: THEME.textDim,
     }).setOrigin(0, 0.5);
 
     const cazarLbl = this.scene.add.text(labelX, TB - 8, t('trim.label_trim'), {
-      fontSize: '8px', fontFamily: 'Arial', fontStyle: 'bold', color: '#667788',
+      fontSize: '8px', fontFamily: 'Arial', fontStyle: 'bold', color: THEME.textDim,
     }).setOrigin(0, 0.5);
 
     // ── Rope images (stacked, crossfaded) ─────────────────────────────────────
@@ -103,7 +103,7 @@ class MainsheetController {
     // ── Trim status label below track ─────────────────────────────────────────
     this.label = this.scene.add.text(trackX, H / 2 - 22, '', {
       fontSize: '11px', fontFamily: 'Arial', fontStyle: 'bold',
-      color: '#ccddff', align: 'center',
+      color: THEME.textBright, align: 'center',
     }).setOrigin(0.5, 0.5);
 
     this.container.add([bg, deco, filarLbl, cazarLbl,
@@ -118,7 +118,7 @@ class MainsheetController {
     const hx = 16;  // matches trackX
     g.fillStyle(0x8B6343, 1);
     g.fillCircle(hx, hy, 11);
-    g.lineStyle(2, 0xC9A84C, 1);
+    g.lineStyle(2, THEME.gold, 1);
     g.strokeCircle(hx, hy, 11);
     g.lineStyle(1.5, 0x5C3D1E, 0.8);
     g.lineBetween(hx - 6, hy - 3, hx + 6, hy - 3);

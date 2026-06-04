@@ -14,7 +14,7 @@ class IndicatorsPanel {
     worldGroup.add(this.overlayGfx);
 
     // World-space text for inertia labels
-    const ts = { fontSize: '9px', fontFamily: 'Arial', color: '#aaccdd',
+    const ts = { fontSize: '9px', fontFamily: 'Arial', color: THEME.textSoft,
                  stroke: '#000000', strokeThickness: 2 };
     this._iTgtLbl = scene.add.text(0, 0, '', ts).setVisible(false);
     this._iCurLbl = scene.add.text(0, 0, '', ts).setVisible(false);
@@ -95,7 +95,7 @@ class IndicatorsPanel {
     const len = Math.min(speed * 10, 100);
     if (len < 3) return;
     const rad = Phaser.Math.DegToRad(velDir - 90);
-    this._arrow(g, 0x44ff88, 0.85, bx, by, bx + Math.cos(rad) * len, by + Math.sin(rad) * len);
+    this._arrow(g, THEME.notifOk, 0.85, bx, by, bx + Math.cos(rad) * len, by + Math.sin(rad) * len);
   }
 
   _inertiaPanel(g, bx, by, speed, targetSpeed) {
@@ -115,7 +115,7 @@ class IndicatorsPanel {
 
     // Bar fill — green when building up, amber when coasting above target
     if (fill > 0) {
-      g.fillStyle(over ? 0xffaa22 : 0x44ff88, 0.45);
+      g.fillStyle(over ? 0xffaa22 : THEME.notifOk, 0.45);
       g.fillRoundedRect(px + 8, py + 18, fill, 10, 3);
     }
 
@@ -136,9 +136,9 @@ class IndicatorsPanel {
     const g    = this.mmGfx;
 
     // Background
-    g.fillStyle(0x071020, 0.88);
+    g.fillStyle(THEME.panelBgDeep, 0.88);
     g.fillRoundedRect(mx - 2, my - 2, mm + 4, mm + 4, 6);
-    g.lineStyle(1, 0x2a3a5e, 1);
+    g.lineStyle(1, THEME.panelBorderAlt, 1);
     g.strokeRoundedRect(mx - 2, my - 2, mm + 4, mm + 4, 6);
 
     // Islands
@@ -190,11 +190,11 @@ class IndicatorsPanel {
   // Called from game-scene._buildPausePanel() to populate the Indicators tab
   buildTabContent(container) {
     const rows = [
-      { key: 'windVector', labelKey: 'indicators.wind_vector',  col: 0x99ccff },
-      { key: 'heading',    labelKey: 'indicators.heading',       col: 0xdddddd },
-      { key: 'velocity',   labelKey: 'indicators.velocity',      col: 0x44ff88 },
-      { key: 'inertia',    labelKey: 'indicators.inertia',       col: 0xffcc44 },
-      { key: 'minimap',    labelKey: 'indicators.minimap',       col: 0x88aadd },
+      { key: 'windVector', labelKey: 'indicators.wind_vector',  col: 0x99ccff          },
+      { key: 'heading',    labelKey: 'indicators.heading',       col: 0xdddddd          },
+      { key: 'velocity',   labelKey: 'indicators.velocity',      col: THEME.notifOk     },
+      { key: 'inertia',    labelKey: 'indicators.inertia',       col: THEME.notifWarn   },
+      { key: 'minimap',    labelKey: 'indicators.minimap',       col: 0x88aadd          },
     ];
     const scene = this.scene;
     const lx = -210;  // left edge in pause-panel local space (PW=500)
@@ -212,8 +212,8 @@ class IndicatorsPanel {
       }));
 
       const btn = scene.add.text(220, ry + 3, 'OFF', {
-        fontSize: '13px', fontFamily: 'Arial', color: '#667788',
-        backgroundColor: '#0d1a2a', padding: { x: 12, y: 8 },
+        fontSize: '13px', fontFamily: 'Arial', color: THEME.textDim,
+        backgroundColor: THEME.btnBgDark, padding: { x: 12, y: 8 },
       }).setOrigin(1, 0).setInteractive({ useHandCursor: true });
 
       btn.on('pointerdown', () => {
@@ -238,7 +238,7 @@ class IndicatorsPanel {
     for (const [key, btn] of Object.entries(this._toggleBtns)) {
       const on = this._s[key];
       btn.setText(on ? 'ON' : 'OFF');
-      btn.setColor(on ? '#44ffaa' : '#667788');
+      btn.setColor(on ? THEME.completionText : THEME.textDim);
     }
   }
 
