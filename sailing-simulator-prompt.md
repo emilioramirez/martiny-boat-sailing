@@ -47,6 +47,7 @@ There is no score or time pressure by default. It is a sandbox learning tool wit
 | Sail trim status | On the Mainsheet Controller widget | Text label integrated into the rope controller (see Section 3) |
 | Rudder angle | On the Helm Controller widget | Shown on the mini-boat silhouette beside the helm wheel (see Section 3) |
 | Objective | Bottom-center | Current map objective text resolved via `t(map.objectiveKey)`. Font 11px, word-wrapped to 500px, centered origin `(0.5, 1)`. |
+| Elapsed timer | Top-left, below heading | Stopwatch counting up from game start. Format: `1:23.4` when ≥ 1 min, `45.2s` when under 1 min. Pauses with the game, stops on success/failure, resets on restart. Shown muted (textLabel color) to stay unobtrusive. |
 | Notification panel | Top-center | Contextual tips and coaching messages; toggleable; see Section 14 |
 | Off-screen objective arrow | Screen edge | Small arrow on the nearest screen edge pointing toward the next buoy when it is outside the viewport; disappears when the buoy is visible |
 | Mini-map | Configurable corner | Small world overview showing boat, buoys, islands; toggleable from the Indicators Panel |
@@ -226,6 +227,7 @@ Island polygons are precomputed in `create()` as `this._islandPolygons` (array o
 - Shows `brokenGraphics` overlay on the boat container
 - Shows `failurePanel` container
 - Calls `navigator.vibrate([60, 30, 60])`
+- Stops the timer: `_timerRunning = false`
 
 **Failure panel** (`_buildFailurePanel()`):
 - Phaser Container, depth 62, centered on screen, `setVisible(false)` initially
@@ -234,6 +236,7 @@ Island polygons are precomputed in `create()` as `this._islandPolygons` (array o
 - Title: `t('fail.title')` in red `#ff4444`, 26px bold
 - Reason text: specific collision message, `#ffaaaa`, 15px, word-wrapped
 - Objective reminder: `t('fail.objective_was') + ': ' + t(map.objectiveKey)`, `#aaccdd`, 12px
+- Time + wind line: `⏱ MM:SS.d  💨 X kts · Y°`, 14px, muted color (shown by `_triggerFailure` after stopping timer)
 - Single button: `t('fail.restart')` → calls `_restartMap()`
 - Added to `uiGroup` so it renders through the UI camera
 
@@ -1250,6 +1253,7 @@ Audio is suspended when the game pauses and resumed when it unpauses:
 ```
 project/
 ├── index.html                  ← loads Phaser CDN + all JS files; creates Phaser.Game
+├── theme.js                    ← THEME object — 33 semantic UI color tokens (loaded first, before constants.js)
 ├── constants.js                ← CONSTANTS object
 ├── translations.js             ← TRANSLATIONS + t() + setLanguage()
 ├── maps.js                     ← MAPS array
@@ -1285,6 +1289,7 @@ project/
   <!-- Verify and use the current stable Phaser CDN URL from phaser.io -->
   <script src="https://cdn.phaser.io/releases/x.x.x/phaser.min.js"></script>
   <!-- Load in dependency order -->
+  <script src="theme.js"></script>
   <script src="constants.js"></script>
   <script src="translations.js"></script>
   <script src="maps.js"></script>
@@ -1320,6 +1325,87 @@ project/
 ```
 
 Each `.js` file is independently readable and testable. `sailing-physics.js` has zero Phaser dependency and can be verified in a browser console before the game scene exists. Controller files can be loaded in a minimal Phaser harness before the full game is built.
+
+---
+
+## 14b. Color Theme System (`theme.js`)
+
+All UI colors live in a single `THEME` object defined in `theme.js`, loaded before any other game script. This is the single source of truth for the visual palette — never use raw color literals in UI code.
+
+### Why two formats?
+
+Phaser has two color APIs that require different types:
+- **Graphics** (`fillStyle`, `lineStyle`) take **hex integers**: `0xRRGGBB`
+- **Text** (`scene.add.text`, `{ color: ... }`) take **CSS strings**: `'#rrggbb'`
+
+`THEME` stores both variants where a color is used in both contexts (e.g., `gold: 0xC9A84C` and `goldStr: '#c8a050'`). Never pass a `0x` integer to a text `color` option, and never pass a `'#'` string to `fillStyle`.
+
+### What goes in THEME vs CONSTANTS.COLORS
+
+- **`THEME`** — UI chrome: panels, text, buttons, notifications, widgets, labels, result panels.
+- **`CONSTANTS.COLORS`** — world/game colors: water, hull, islands, buoys. These are rendering constants, not UI palette entries.
+
+### Token reference
+
+```js
+const THEME = {
+  // Panel chrome (backgrounds, borders, tracks)
+  panelBg:        0x1a1a2e,   // control widget panels (α 0.55)
+  panelBgDark:    0x0c1624,   // pause panel (α 0.97)
+  panelBgDeep:    0x08121e,   // notifications / tutorial / mini-map bg
+  panelBorder:    0x3a3a5e,   // control widget borders
+  panelBorderAlt: 0x2a4a6e,   // pause / tutorial / mini-map borders
+  trackBg:        0x080810,   // dark inset track (rope widget)
+
+  // Text hierarchy
+  textPrimary:    '#ffffff',
+  textAccent:     '#44ddff',  // highlighted values, active tabs
+  textBright:     '#ccddff',  // secondary bright labels
+  textSoft:       '#aaccdd',  // world-space labels (inertia, tutorial body)
+  textSub:        '#99aabb',
+  textLabel:      '#8899aa',  // dim label text, helm PORT/STBD idle, HUD timer
+  textDim:        '#667788',  // widget titles, toggle OFF state
+  textMuted:      '#556677',  // tutorial step counter, metadata
+
+  // Gold (wind config, active-displacement, special)
+  gold:           0xC9A84C,   // hex integer for graphics
+  goldStr:        '#c8a050',  // CSS string for text
+  goldBright:     '#ffcc44',  // active wind-config button text
+
+  // Notification severity
+  notifDanger:    0xff4444,
+  notifWarn:      0xffcc44,
+  notifOk:        0x44ff88,
+  notifInfo:      0x6688aa,
+
+  // Point-of-sail label colors
+  posIrons:       '#ff5555',
+  posCloseHauled: '#44ddff',
+  posCloseReach:  '#44ff99',
+  posBeamReach:   '#aaff44',
+  posBroadReach:  '#ffcc44',
+  posRunning:     '#ff8844',
+
+  // Failure panel
+  failureBg:      0x1a0000,
+  failureBorder:  0xcc2222,
+  failureText:    '#ff4444',
+
+  // Outcome panels
+  completionText: '#44ffaa',  // success title, toggle ON state
+  restartText:    '#ff8866',  // restart button text
+
+  // Buttons
+  btnBg:          '#1a2a3a',
+  btnBgDark:      '#0d1a2a',
+
+  // Menu wood buttons (MenuScene)
+  woodNormal:     0xd4a96e,
+  woodHover:      0xe8bf78,
+  woodBorder:     0x7a4010,
+  woodText:       '#1a2a5c',
+};
+```
 
 ---
 
@@ -2023,6 +2109,7 @@ game-scene.js (GameScene extends Phaser.Scene)
     → instantiate InputManager, controllers, ObjectiveTracker, NotificationSystem, etc.
   update(time, delta):
     inputManager.flush()
+    → if _timerRunning: _timerMs += delta; hudTimer.setText(_formatTime(_timerMs))
     → newState = sailingPhysics.update(boatState, delta)
     → move boat Container (x/y/angle)
     → redraw dynamic Graphics (wake, boom, water dashes)
@@ -2040,11 +2127,12 @@ game-scene.js (GameScene extends Phaser.Scene)
 
   _togglePause(): flips isPaused; if pausing → audio.suspend(); if resuming → audio.resume()
 
-  _buildCompletionBanner(): Phaser Container depth 60 — dim overlay + "¡Completado!" + Restart + Menu btns
-  _showCompletion(): makes banner visible; audio.playCompletion(); isPaused=true; audio.suspend() after 1.8s
+  _buildCompletionBanner(): Phaser Container depth 60 — dim overlay + "¡Completado!" + elapsed time (22px) + wind config (💨 X kts · Y°, 12px) + Restart + Menu btns
+  _showCompletion(): stops timer (_timerRunning=false); updates time/wind text objects; makes banner visible; audio.playCompletion(); isPaused=true; audio.suspend() after 1.8s
   _flashBuoy(i): yellow tween overlay → redraw grey → hide detection circle → float text
   _rebuildBuoyVisuals(): restores all buoys to original color + shows detection circles (called by _restartMap)
-  _restartMap(): resets boat state + physics + objectiveTracker + buoy visuals + failure state; audio.resume(); returns to play state
+  _restartMap(): resets boat state + physics + objectiveTracker + buoy visuals + failure state; resets _timerMs=0, _timerRunning=true, hudTimer text; audio.resume(); returns to play state
+  _formatTime(ms): tenths-of-second precision. Returns '1:23.4' when ≥ 1 min, '45.2s' when under 1 min.
 
   _buildPausePanel(): four-tab container
     Game tab: wind dir/speed (< value > buttons), displacement radio buttons, language (ES/EN), tutorial replay

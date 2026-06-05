@@ -10,9 +10,11 @@
 
 class SailingPhysics {
   constructor() {
-    this._prevSignedAWA = null;
-    this._ironsTimer    = 0;  // seconds AWA<30° && speed<1kts
-    this._ironsCooldown = 0;  // 3-second cooldown after escaping irons
+    this._prevSignedAWA     = null;
+    this._ironsTimer        = 0;  // seconds AWA<30° && speed<1kts
+    this._ironsCooldown     = 0;  // 3-second cooldown after escaping irons
+    this._ironsFallSide     = 1;  // 1=starboard, -1=port — which side the bow drifts to
+    this._lastMeaningfulAWA = 0;  // last AWA before going head-to-wind
   }
 
   // ── Public helpers ──────────────────────────────────────────────────────────
@@ -67,6 +69,11 @@ class SailingPhysics {
     const signedAWA = this.getSignedAWA(s.boatHeading, s.windDirection);
     const absAWA    = Math.abs(signedAWA);
 
+    // Track last non-trivial AWA to know which side to fall when stuck in irons
+    if (Math.abs(signedAWA) > 5) {
+      this._lastMeaningfulAWA = signedAWA;
+    }
+
     // ── Tack / jibe detection ─────────────────────────────────────────────────
     // Both events are a sign change of signedAWA. Distinguish by |AWA| magnitude:
     //   tack:  bow through wind   → AWA near 0°   → absSum small
@@ -120,6 +127,10 @@ class SailingPhysics {
     // Entry: AWA < 30° AND speed < 1 kt persisting > 2 s
     const ironsCondition = absAWA < CONSTANTS.NO_GO_ZONE_DEG * 2 && newSpeed < 1.0;
     if (ironsCondition && this._ironsCooldown <= 0) {
+      if (this._ironsTimer === 0) {
+        // Lock in which side the bow will fall toward when we go fully still
+        this._ironsFallSide = this._lastMeaningfulAWA >= 0 ? 1 : -1;
+      }
       this._ironsTimer += delta;
     } else {
       this._ironsTimer = 0;
@@ -140,8 +151,17 @@ class SailingPhysics {
     const MAX_TURN_RATE = 60;
     const speedNorm     = Math.min(newSpeed / 6, 1.5);
     const rudderEffect  = isInIrons ? 0.2 : 1.0;
-    const dHeading      = (s.rudderAngle / CONSTANTS.MAX_RUDDER_ANGLE)
+    let   dHeading      = (s.rudderAngle / CONSTANTS.MAX_RUDDER_ANGLE)
                         * MAX_TURN_RATE * speedNorm * rudderEffect * delta;
+
+    // Irons drift: when fully stopped head-to-wind, wind pressure on hull and sails
+    // naturally pushes the bow to one side — the same side the boat was on before tacking.
+    // This prevents the "forever stuck" state and mirrors real sailing behavior.
+    if (isInIrons && newSpeed < 0.3) {
+      const IRONS_DRIFT_RATE = 4; // deg/s — gentle but enough to escape within ~5–8 s
+      dHeading += this._ironsFallSide * IRONS_DRIFT_RATE * delta;
+    }
+
     const newHeading    = ((s.boatHeading + dHeading) % 360 + 360) % 360;
 
     // ── Position update ───────────────────────────────────────────────────────
